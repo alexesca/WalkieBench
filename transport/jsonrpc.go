@@ -4,10 +4,16 @@ package transport
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -50,12 +56,20 @@ func New(cfg Config) *JSONRPCClient {
 
 func (c *JSONRPCClient) call(ctx context.Context, operation string, params any, out any) error {
 	id := atomic.AddUint64(&c.nextID, 1)
+	token := ""
+	if v := c.token.Load(); v != nil {
+		token = v.(string)
+	}
+	secureParams, err := protectJSON(params, token, true)
+	if err != nil {
+		return err
+	}
 	reqBody, err := json.Marshal(struct {
 		JSONRPC string `json:"jsonrpc"`
 		ID      uint64 `json:"id"`
 		Method  string `json:"method"`
 		Params  any    `json:"params,omitempty"`
-	}{"2.0", id, operation, params})
+	}{"2.0", id, operation, secureParams})
 	if err != nil {
 		return err
 	}
@@ -65,8 +79,9 @@ func (c *JSONRPCClient) call(ctx context.Context, operation string, params any, 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if v := c.token.Load(); v != nil {
-		req.Header.Set("Authorization", "Bearer "+v.(string))
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-HarnessTalkie-Secure", "aesgcm-v1")
 	}
 	resp, err := c.cfg.HTTPClient.Do(req)
 	if err != nil {
@@ -97,10 +112,128 @@ func (c *JSONRPCClient) call(ctx context.Context, operation string, params any, 
 		err = fmt.Errorf("contract error %d: %s", envelope.Error.Code, envelope.Error.Message)
 	}
 	if err == nil && out != nil {
-		err = json.Unmarshal(envelope.Result, out)
+		result := envelope.Result
+		if token != "" {
+			result, err = protectJSON(result, token, false)
+		}
+		if err == nil {
+			err = json.Unmarshal(result, out)
+		}
 	}
 	c.observe(operation, len(reqBody), len(body), started, err, reqBody, body)
 	return err
+}
+
+const securePrefix = "ht1:"
+
+func sessionBlock(token string) (cipher.AEAD, error) {
+	key := sha256.Sum256(append([]byte("HarnessTalkie RPC v1\x00"), []byte(token)...))
+	b, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(b)
+}
+
+func sensitiveKey(key string) bool {
+	switch key {
+	case "content", "title", "summary", "bio", "description", "current_work", "limitations":
+		return true
+	default:
+		return false
+	}
+}
+
+func protectString(value, token string, encrypt bool) (string, error) {
+	if token == "" {
+		return value, nil
+	}
+	aead, err := sessionBlock(token)
+	if err != nil {
+		return "", err
+	}
+	if encrypt {
+		if strings.HasPrefix(value, securePrefix) {
+			return value, nil
+		}
+		nonce := make([]byte, aead.NonceSize())
+		if _, err = rand.Read(nonce); err != nil {
+			return "", err
+		}
+		sealed := aead.Seal(nonce, nonce, []byte(value), nil)
+		return securePrefix + base64.RawURLEncoding.EncodeToString(sealed), nil
+	}
+	if !strings.HasPrefix(value, securePrefix) {
+		return value, nil
+	}
+	sealed, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(value, securePrefix))
+	if err != nil || len(sealed) < aead.NonceSize() {
+		if err == nil {
+			err = fmt.Errorf("invalid secure content")
+		}
+		return "", err
+	}
+	plain, err := aead.Open(nil, sealed[:aead.NonceSize()], sealed[aead.NonceSize():], nil)
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
+}
+
+func protectValue(value any, token string, encrypt bool) error {
+	switch x := value.(type) {
+	case map[string]any:
+		for key, child := range x {
+			if sensitiveKey(key) {
+				if text, ok := child.(string); ok {
+					protected, err := protectString(text, token, encrypt)
+					if err != nil {
+						return err
+					}
+					x[key] = protected
+					continue
+				}
+			}
+			if err := protectValue(child, token, encrypt); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, child := range x {
+			if err := protectValue(child, token, encrypt); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func protectJSON(raw any, token string, encrypt bool) (json.RawMessage, error) {
+	if token == "" || raw == nil {
+		if b, ok := raw.(json.RawMessage); ok {
+			return b, nil
+		}
+		b, err := json.Marshal(raw)
+		return b, err
+	}
+	var value any
+	var err error
+	if b, ok := raw.(json.RawMessage); ok {
+		err = json.Unmarshal(b, &value)
+	} else {
+		b, marshalErr := json.Marshal(raw)
+		err = marshalErr
+		if err == nil {
+			err = json.Unmarshal(b, &value)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err = protectValue(value, token, encrypt); err != nil {
+		return nil, err
+	}
+	return json.Marshal(value)
 }
 
 func (c *JSONRPCClient) observe(op string, request, response int, started time.Time, err error, body, responseBody []byte) {
@@ -138,9 +271,60 @@ func (c *JSONRPCClient) ListContacts(ctx context.Context) ([]contract.Contact, e
 	e := c.call(ctx, "ListContacts", nil, &v)
 	return v, e
 }
+func (c *JSONRPCClient) ListParticipants(ctx context.Context, q contract.ParticipantQuery) ([]contract.Participant, error) {
+	var v []contract.Participant
+	e := c.call(ctx, "ListParticipants", q, &v)
+	return v, e
+}
+func (c *JSONRPCClient) FindPeers(ctx context.Context, q contract.ParticipantQuery) ([]contract.Participant, error) {
+	var v []contract.Participant
+	e := c.call(ctx, "FindPeers", q, &v)
+	return v, e
+}
+func (c *JSONRPCClient) ListInvites(ctx context.Context) ([]contract.Invitation, error) {
+	var v []contract.Invitation
+	e := c.call(ctx, "ListInvites", nil, &v)
+	return v, e
+}
+func (c *JSONRPCClient) ListGroups(ctx context.Context) ([]contract.Group, error) {
+	var v []contract.Group
+	e := c.call(ctx, "ListGroups", nil, &v)
+	return v, e
+}
+func (c *JSONRPCClient) ListPublicPosts(ctx context.Context) ([]contract.Post, error) {
+	var v []contract.Post
+	e := c.call(ctx, "ListPublicPosts", nil, &v)
+	return v, e
+}
+func (c *JSONRPCClient) GetCapabilities(ctx context.Context) ([]string, error) {
+	var v []string
+	e := c.call(ctx, "GetCapabilities", nil, &v)
+	return v, e
+}
+func (c *JSONRPCClient) Heartbeat(ctx context.Context) error {
+	return c.call(ctx, "Heartbeat", nil, nil)
+}
+func (c *JSONRPCClient) Bootstrap(ctx context.Context, profiles, invites, posts bool) (contract.Bootstrap, error) {
+	var v contract.Bootstrap
+	e := c.call(ctx, "Bootstrap", map[string]bool{"include_profiles": profiles, "include_invites": invites, "include_recent_posts": posts}, &v)
+	return v, e
+}
+func (c *JSONRPCClient) ConnectAndBootstrap(ctx context.Context, query string) (contract.Bootstrap, error) {
+	var v contract.Bootstrap
+	e := c.call(ctx, "ConnectAndBootstrap", map[string]string{"query": query}, &v)
+	return v, e
+}
+func (c *JSONRPCClient) WaitForEvents(ctx context.Context, q contract.EventQuery) (contract.EventBatch, error) {
+	var v contract.EventBatch
+	e := c.call(ctx, "WaitForEvents", q, &v)
+	return v, e
+}
 func (c *JSONRPCClient) SendDM(ctx context.Context, to, content string) (contract.Message, error) {
+	return c.SendDMWithOptions(ctx, contract.SendDMRequest{To: to, Content: content})
+}
+func (c *JSONRPCClient) SendDMWithOptions(ctx context.Context, req contract.SendDMRequest) (contract.Message, error) {
 	var v contract.Message
-	e := c.call(ctx, "SendDM", map[string]string{"to": to, "content": content}, &v)
+	e := c.call(ctx, "SendDM", req, &v)
 	return v, e
 }
 func (c *JSONRPCClient) GetDMHistory(ctx context.Context, with string) ([]contract.Message, error) {
@@ -148,9 +332,19 @@ func (c *JSONRPCClient) GetDMHistory(ctx context.Context, with string) ([]contra
 	e := c.call(ctx, "GetDMHistory", map[string]string{"with": with}, &v)
 	return v, e
 }
+func (c *JSONRPCClient) GetDMHistoryPage(ctx context.Context, q contract.MessageQuery) (contract.MessagePage, error) {
+	var v contract.MessagePage
+	e := c.call(ctx, "GetDMHistoryPage", q, &v)
+	return v, e
+}
 func (c *JSONRPCClient) ReceiveDMs(ctx context.Context) ([]contract.Message, error) {
 	var v []contract.Message
 	e := c.call(ctx, "ReceiveDMs", nil, &v)
+	return v, e
+}
+func (c *JSONRPCClient) ReceiveDMsPage(ctx context.Context, q contract.MessageQuery) (contract.MessagePage, error) {
+	var v contract.MessagePage
+	e := c.call(ctx, "ReceiveDMsPage", q, &v)
 	return v, e
 }
 func (c *JSONRPCClient) MarkRead(ctx context.Context, ids []string) error {
@@ -209,4 +403,9 @@ func (c *JSONRPCClient) Resume(ctx context.Context) (contract.ResumeResult, erro
 	e := c.call(ctx, "Resume", nil, &v)
 	return v, e
 }
-func (c *JSONRPCClient) Close() error { return nil }
+func (c *JSONRPCClient) Close() error {
+	if c.token.Load() == nil {
+		return nil
+	}
+	return c.call(context.Background(), "Disconnect", nil, nil)
+}

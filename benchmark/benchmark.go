@@ -97,9 +97,34 @@ func (s *Session) ConnectTo(c context.Context, id string) error {
 func (s *Session) ListContacts(c context.Context) ([]contract.Contact, error) {
 	return call(s, "ListContacts", func() ([]contract.Contact, error) { return s.client.ListContacts(c) })
 }
+func (s *Session) ListParticipants(c context.Context, q contract.ParticipantQuery) ([]contract.Participant, error) {
+	return call(s, "ListParticipants", func() ([]contract.Participant, error) { return s.client.ListParticipants(c, q) })
+}
+func (s *Session) FindPeers(c context.Context, q contract.ParticipantQuery) ([]contract.Participant, error) {
+	return call(s, "FindPeers", func() ([]contract.Participant, error) { return s.client.FindPeers(c, q) })
+}
+func (s *Session) ListInvites(c context.Context) ([]contract.Invitation, error) {
+	return call(s, "ListInvites", func() ([]contract.Invitation, error) { return s.client.ListInvites(c) })
+}
+func (s *Session) Heartbeat(c context.Context) error {
+	return s.callErr("Heartbeat", func() error { return s.client.Heartbeat(c) })
+}
+func (s *Session) Bootstrap(c context.Context, profiles, invites, posts bool) (contract.Bootstrap, error) {
+	return call(s, "Bootstrap", func() (contract.Bootstrap, error) { return s.client.Bootstrap(c, profiles, invites, posts) })
+}
+func (s *Session) ConnectAndBootstrap(c context.Context, query string) (contract.Bootstrap, error) {
+	return call(s, "ConnectAndBootstrap", func() (contract.Bootstrap, error) { return s.client.ConnectAndBootstrap(c, query) })
+}
+func (s *Session) WaitForEvents(c context.Context, q contract.EventQuery) (contract.EventBatch, error) {
+	return call(s, "WaitForEvents", func() (contract.EventBatch, error) { return s.client.WaitForEvents(c, q) })
+}
 func (s *Session) SendDM(c context.Context, to, m string) (contract.Message, error) {
 	s.telemetry.RegisterPlaintext(m)
 	return call(s, "SendDM", func() (contract.Message, error) { return s.client.SendDM(c, to, m) })
+}
+func (s *Session) SendDMWithOptions(c context.Context, req contract.SendDMRequest) (contract.Message, error) {
+	s.telemetry.RegisterPlaintext(req.Content)
+	return call(s, "SendDMWithOptions", func() (contract.Message, error) { return s.client.SendDMWithOptions(c, req) })
 }
 func (s *Session) GetDMHistory(c context.Context, id string) ([]contract.Message, error) {
 	return call(s, "GetDMHistory", func() ([]contract.Message, error) { return s.client.GetDMHistory(c, id) })
@@ -185,7 +210,7 @@ func (h *Harness) setup(ctx context.Context) error {
 		s.identity = id
 		h.sessions[name] = s
 		h.identities[name] = id
-		if e = s.PublishProfile(ctx, contract.Profile{DisplayName: name, Bio: "WalkieBench participant"}); e != nil {
+		if e = s.PublishProfile(ctx, contract.Profile{DisplayName: name, Bio: "WalkieBench participant", Repository: "WalkieBench", Harness: "benchmark", Capabilities: []string{"benchmarking", "collaboration"}, CurrentWork: "WalkieBench interoperability", CollaborationTopics: []string{"realtime systems", "agent coordination"}}); e != nil {
 			return fmt.Errorf("profile %s: %w", name, e)
 		}
 	}
@@ -223,7 +248,7 @@ func (h *Harness) Run(ctx context.Context) telemetry.Scorecard {
 		name string
 		fn   func(context.Context) []error
 	}{
-		{"identity_lifecycle", h.identityLifecycle}, {"dm_round_trip_resume", h.dmScenario}, {"group_membership_history", h.groupScenario}, {"post_nested_thread", h.postScenario}, {"concurrent_mixed_writers", h.concurrentScenario}, {"human_agent_parity", h.humanParityScenario}, {"disconnect_reconnect_load", h.loadScenario}, {"unauthorized_access", h.unauthorizedScenario}, {"growing_history", h.growingHistoryScenario}, {"presence_notifications", h.presenceScenario},
+		{"identity_lifecycle", h.identityLifecycle}, {"discovery_bootstrap_events", h.discoveryScenario}, {"dm_round_trip_resume", h.dmScenario}, {"group_membership_history", h.groupScenario}, {"post_nested_thread", h.postScenario}, {"concurrent_mixed_writers", h.concurrentScenario}, {"human_agent_parity", h.humanParityScenario}, {"disconnect_reconnect_load", h.loadScenario}, {"unauthorized_access", h.unauthorizedScenario}, {"growing_history", h.growingHistoryScenario}, {"presence_notifications", h.presenceScenario},
 	}
 	for _, sc := range scenarios {
 		h.t.BeginScenario(sc.name)
@@ -256,6 +281,77 @@ func (h *Harness) identityLifecycle(ctx context.Context) []error {
 	}
 	if r.RestoredMessages < 0 {
 		return []error{fmt.Errorf("invalid resume message count")}
+	}
+	return nil
+}
+
+func (h *Harness) discoveryScenario(ctx context.Context) []error {
+	a, b, c := h.sessions["agent-a"], h.sessions["agent-b"], h.sessions["agent-c"]
+	started := time.Now()
+	boot, e := a.Bootstrap(ctx, true, true, true)
+	if e != nil {
+		return []error{e}
+	}
+	h.t.Metric("bootstrap_latency_ms", float64(time.Since(started).Microseconds())/1000)
+	if boot.Identity.ID != a.identityID() || !hasParticipant(boot.Participants, b.identityID()) {
+		return []error{fmt.Errorf("bootstrap omitted caller or known participant")}
+	}
+	peers, e := a.FindPeers(ctx, contract.ParticipantQuery{Capability: "benchmarking"})
+	if e != nil {
+		return []error{e}
+	}
+	if !hasParticipant(peers, b.identityID()) || peers[0].Repository == "" || peers[0].Harness == "" {
+		return []error{fmt.Errorf("FindPeers omitted profile metadata")}
+	}
+	if e = a.Heartbeat(ctx); e != nil {
+		return []error{e}
+	}
+	connected, e := a.ConnectAndBootstrap(ctx, b.identityID())
+	if e != nil {
+		return []error{e}
+	}
+	if !hasParticipant(connected.Participants, b.identityID()) {
+		return []error{fmt.Errorf("ConnectAndBootstrap omitted peer")}
+	}
+	g, e := a.CreateGroup(ctx, "discovery-invites")
+	if e != nil {
+		return []error{e}
+	}
+	if e = a.Invite(ctx, g.ID, c.identityID()); e != nil {
+		return []error{e}
+	}
+	invites, e := c.ListInvites(ctx)
+	if e != nil {
+		return []error{e}
+	}
+	if !hasInvitation(invites, g.ID) {
+		return []error{fmt.Errorf("ListInvites omitted pending invitation")}
+	}
+	cursor := boot.Cursor
+	messageID := fmt.Sprintf("discovery-%d", time.Now().UnixNano())
+	first, e := a.SendDMWithOptions(ctx, contract.SendDMRequest{To: b.identityID(), Content: "cursor-discovery", ClientMessageID: messageID})
+	if e != nil {
+		return []error{e}
+	}
+	second, e := a.SendDMWithOptions(ctx, contract.SendDMRequest{To: b.identityID(), Content: "cursor-discovery", ClientMessageID: messageID})
+	if e != nil {
+		return []error{e}
+	}
+	if first.ID != second.ID {
+		return []error{fmt.Errorf("idempotent SendDM returned different message IDs")}
+	}
+	batch, e := b.WaitForEvents(ctx, contract.EventQuery{AfterSequence: cursor, WaitMS: 1000, Limit: 20, Ack: true})
+	if e != nil {
+		return []error{e}
+	}
+	found := false
+	for _, event := range batch.Events {
+		if event.Message != nil && event.Message.ID == first.ID && event.Message.Content == "cursor-discovery" {
+			found = true
+		}
+	}
+	if !found {
+		return []error{fmt.Errorf("WaitForEvents omitted new DM")}
 	}
 	return nil
 }
@@ -464,7 +560,7 @@ func (h *Harness) concurrentScenario(ctx context.Context) []error {
 	if e = c.Join(ctx, g.ID); e != nil {
 		return []error{e}
 	}
-	p, e := a.CreatePost(ctx, "concurrent-thread", "thread")
+	p, e := a.CreatePost(ctx, "concurrent-thread", "thread-content-probe")
 	if e != nil {
 		return []error{e}
 	}
@@ -652,7 +748,7 @@ func (h *Harness) unauthorizedScenario(ctx context.Context) []error {
 	if _, e = c.SendGroupMessage(ctx, g.ID, "unauthorized"); e == nil {
 		return []error{fmt.Errorf("unauthorized group write accepted")}
 	}
-	if _, e = a.SendDM(ctx, b.identityID(), "private"); e != nil {
+	if _, e = a.SendDM(ctx, b.identityID(), "private-probe"); e != nil {
 		return []error{e}
 	}
 	if _, e = c.GetDMHistory(ctx, b.identityID()); e == nil {
@@ -846,6 +942,22 @@ func messageIDs(ms []contract.Message, s string) []string {
 func hasContact(cs []contract.Contact, id string) bool {
 	for _, c := range cs {
 		if c.IdentityID == id {
+			return true
+		}
+	}
+	return false
+}
+func hasParticipant(ps []contract.Participant, id string) bool {
+	for _, p := range ps {
+		if p.IdentityID == id {
+			return true
+		}
+	}
+	return false
+}
+func hasInvitation(xs []contract.Invitation, groupID string) bool {
+	for _, x := range xs {
+		if x.Group.ID == groupID {
 			return true
 		}
 	}

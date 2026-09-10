@@ -38,12 +38,18 @@ exact names in `contract.Client`, and `params` contains the following fields:
 | Method | Parameters |
 | --- | --- |
 | CreateOrLoadIdentity | `identity` |
-| PublishProfile | `display_name`, optional `bio` |
+| PublishProfile | `display_name`, optional profile metadata |
 | GetPresence | `identity_id` |
 | ListOnline, ListContacts, ReceiveDMs, Resume | none |
+| Bootstrap | `include_profiles`, `include_invites`, `include_recent_posts` |
+| ListParticipants, FindPeers | optional participant query |
+| ListInvites, ListGroups, ListPublicPosts, GetCapabilities, Heartbeat | none |
+| ConnectAndBootstrap | `query` (ID, handle, or display name) |
+| WaitForEvents | `after_sequence`, `wait_ms`, `limit`, optional `ack` |
 | ConnectTo | `identity_id` |
-| SendDM | `to`, `content` |
+| SendDM | `to`, `content`, optional `reply_to`, `client_message_id` |
 | GetDMHistory | `with` |
+| GetDMHistoryPage, ReceiveDMsPage | `with`, `after_sequence`, `limit`, `unread_only` |
 | MarkRead | `message_ids` |
 | CreateGroup | `name` |
 | Invite | `group`, `user` |
@@ -66,14 +72,20 @@ wire request or response is an encryption gate failure. This checks the benchmar
 observable boundary without reading implementation storage or keys. The server
 must therefore expose encrypted or opaque content at the transport boundary.
 
+The reference JSON-RPC transport uses `X-HarnessTalkie-Secure: aesgcm-v1`
+after authentication. Sensitive string fields are encoded as `ht1:` values
+using AES-GCM with a key derived from the bearer session token. Implementations
+may provide an equivalent secure transport, but secure clients must be able to
+round-trip the documented contract values after decoding them locally.
+
 ## Scenarios and gates
 
 Every scenario records each contract operation, wall-clock duration, errors,
 wire bytes, and latency percentiles. The run covers identity reconnect, DM
 delivery and history, group membership changes, nested threads and followers,
 mixed concurrent writers, human identity parity, controlled offline catch-up,
-unauthorized reads and writes, growing histories, presence, notifications, and
-browser-driven human actions.
+unauthorized reads and writes, growing histories, presence, notifications,
+discovery, and browser-driven human actions.
 
 The hard gates are message loss, ordering violations, failed resume, accepted
 unauthorized access, plaintext test content on the wire, missing human/agent
