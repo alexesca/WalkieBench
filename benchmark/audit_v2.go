@@ -232,6 +232,9 @@ func (h *Harness) notificationDurabilityScenario(ctx context.Context) []error {
 			return []error{err}
 		}
 	}
+	if err = a.v2.UpdateServerPermissions(ctx, server.ID, contract.PermissionChange{Role: contract.RoleMember, Permission: contract.PermissionCreatePosts, Allowed: true}); err != nil {
+		return []error{err}
+	}
 	clear := func(s *Session) error {
 		ns, e := s.v2.ListNotifications(ctx, contract.NotificationQuery{Limit: 500})
 		if e != nil {
