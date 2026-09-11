@@ -33,6 +33,13 @@ func (f jsonFactory) New(ctx context.Context, id *contract.Identity) (contract.C
 	}}), nil
 }
 
+func (f jsonFactory) NewTransport(ctx context.Context, name string, id *contract.Identity) (contract.Client, error) {
+	if name != "jsonrpc" {
+		return nil, fmt.Errorf("transport %q is not configured for this benchmark endpoint", name)
+	}
+	return f.New(ctx, id)
+}
+
 func main() {
 	endpoint := flag.String("endpoint", "", "JSON-RPC endpoint implementing the WalkieBench contract")
 	uiURL := flag.String("ui-url", "", "human UI URL; required for the browser gate")
@@ -43,6 +50,9 @@ func main() {
 	historyComments := flag.Int("history-comments", 1000, "comments in growing-history scenario")
 	resourceCommand := flag.String("resource-command", "", "optional command returning telemetry.Resource JSON for server resource samples")
 	selectorsFile := flag.String("browser-selectors", "", "JSON file containing browser selector overrides")
+	profile := flag.String("profile", "full", "benchmark profile (use --help with profiles documented in README)")
+	seed := flag.Int64("seed", 20260910, "deterministic scenario seed")
+	requireV2 := flag.Bool("require-v2", false, "treat unavailable V2 capabilities as invalid even outside the full profile")
 	flag.Parse()
 	if *endpoint == "" {
 		fmt.Fprintln(os.Stderr, "--endpoint is required")
@@ -65,7 +75,7 @@ func main() {
 	if *uiURL != "" {
 		driver = browser.AgentBrowser{Command: *browserCommand}
 	}
-	cfg := benchmark.Config{Workers: *workers, HistoryMessages: *historyMessages, HistoryComments: *historyComments, ResourceCommand: *resourceCommand, BrowserURL: *uiURL, BrowserCommand: *browserCommand, BrowserSelectors: selectors}
+	cfg := benchmark.Config{Workers: *workers, HistoryMessages: *historyMessages, HistoryComments: *historyComments, ResourceCommand: *resourceCommand, BrowserURL: *uiURL, BrowserCommand: *browserCommand, BrowserSelectors: selectors, Profile: *profile, Seed: *seed, RequireV2: *requireV2}
 	factory := jsonFactory{endpoint: *endpoint, httpClient: &http.Client{Timeout: 30 * time.Second}, collector: t}
 	score := benchmark.New(factory, cfg, t, driver).Run(context.Background())
 	if e := t.WriteJSON(*output); e != nil {

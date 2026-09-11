@@ -137,7 +137,7 @@ func sessionBlock(token string) (cipher.AEAD, error) {
 
 func sensitiveKey(key string) bool {
 	switch key {
-	case "content", "title", "summary", "bio", "description", "current_work", "limitations":
+	case "content", "title", "summary", "bio", "description", "purpose", "topics", "topic", "tags", "rules", "current_work", "limitations", "reason", "interests", "capabilities", "collaboration_topics":
 		return true
 	default:
 		return false
@@ -191,6 +191,19 @@ func protectValue(value any, token string, encrypt bool) error {
 						return err
 					}
 					x[key] = protected
+					continue
+				}
+				if list, ok := child.([]any); ok {
+					for i, item := range list {
+						if text, ok := item.(string); ok {
+							protected, err := protectString(text, token, encrypt)
+							if err != nil {
+								return err
+							}
+							list[i] = protected
+						}
+					}
+					x[key] = list
 					continue
 				}
 			}

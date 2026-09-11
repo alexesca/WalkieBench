@@ -38,6 +38,9 @@ type Metric struct {
 }
 type Scenario struct {
 	Name        string    `json:"name"`
+	Category    string    `json:"category,omitempty"`
+	Status      string    `json:"status"`
+	HardGate    bool      `json:"hard_gate"`
 	Passed      bool      `json:"passed"`
 	StartedAt   time.Time `json:"started_at"`
 	FinishedAt  time.Time `json:"finished_at"`
@@ -63,6 +66,23 @@ type Reliability struct {
 	AccessControlViolations int `json:"access_control_violations"`
 	EncryptionViolations    int `json:"encryption_violations"`
 }
+type Efficiency struct {
+	Operations                 int     `json:"operations"`
+	RoundTrips                 int     `json:"round_trips"`
+	RequestBytes               int64   `json:"request_bytes"`
+	ResponseBytes              int64   `json:"response_bytes"`
+	TotalWireBytes             int64   `json:"total_wire_bytes"`
+	AgentInputBytes            int64   `json:"agent_input_bytes"`
+	AgentOutputBytes           int64   `json:"agent_output_bytes"`
+	EstimatedInputTokens       int64   `json:"estimated_input_tokens"`
+	EstimatedOutputTokens      int64   `json:"estimated_output_tokens"`
+	EstimatedTotalTokens       int64   `json:"estimated_total_tokens"`
+	Retries                    int     `json:"retries"`
+	MaintenanceOperations      int     `json:"maintenance_operations"`
+	SuccessfulActions          int     `json:"successful_actions"`
+	TimeToFirstCollaborationMS float64 `json:"time_to_first_collaboration_ms,omitempty"`
+	EfficiencyScore            float64 `json:"efficiency_score,omitempty"`
+}
 type Scorecard struct {
 	Benchmark        string             `json:"benchmark"`
 	Version          string             `json:"version"`
@@ -77,6 +97,18 @@ type Scorecard struct {
 	Metrics          map[string]float64 `json:"metrics"`
 	Reliability      Reliability        `json:"reliability"`
 	Resources        []Resource         `json:"resources,omitempty"`
+	Profile          string             `json:"profile,omitempty"`
+	Seed             int64              `json:"seed"`
+	Efficiency       Efficiency         `json:"efficiency"`
+	Categories       []Category         `json:"categories,omitempty"`
+}
+
+type Category struct {
+	Name     string  `json:"name"`
+	Passed   bool    `json:"passed"`
+	HardGate bool    `json:"hard_gate"`
+	Score    float64 `json:"score"`
+	Details  string  `json:"details,omitempty"`
 }
 
 type Collector struct {
@@ -90,7 +122,41 @@ type Collector struct {
 }
 
 func New() *Collector {
-	return &Collector{score: Scorecard{Benchmark: "WalkieBench", Version: "1.0", StartedAt: time.Now(), OperationSummary: map[string]Metric{}, Metrics: map[string]float64{}}, values: map[string][]float64{}}
+	return &Collector{score: Scorecard{Benchmark: "WalkieBench", Version: "2.0", StartedAt: time.Now(), OperationSummary: map[string]Metric{}, Metrics: map[string]float64{}}, values: map[string][]float64{}}
+}
+func (c *Collector) SetRunMetadata(profile string, seed int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.score.Profile = profile
+	c.score.Seed = seed
+}
+func (c *Collector) SetEfficiencyScore(score float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.score.Efficiency.EfficiencyScore = score
+}
+func (c *Collector) SetTimeToFirstCollaboration(ms float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.score.Efficiency.TimeToFirstCollaborationMS = ms
+}
+func (c *Collector) SetCategory(name string, passed, hardGate bool, score float64, details string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.score.Categories {
+		if c.score.Categories[i].Name == name {
+			c.score.Categories[i].Passed = c.score.Categories[i].Passed && passed
+			c.score.Categories[i].HardGate = c.score.Categories[i].HardGate || hardGate
+			if score > c.score.Categories[i].Score {
+				c.score.Categories[i].Score = score
+			}
+			if details != "passed" {
+				c.score.Categories[i].Details = details
+			}
+			return
+		}
+	}
+	c.score.Categories = append(c.score.Categories, Category{Name: name, Passed: passed, HardGate: hardGate, Score: score, Details: details})
 }
 func (c *Collector) BeginScenario(name string) {
 	c.mu.Lock()
@@ -100,10 +166,17 @@ func (c *Collector) BeginScenario(name string) {
 	c.scenarioOps = 0
 }
 func (c *Collector) EndScenario(passed bool, errs []error) {
+	status := "passed"
+	if !passed {
+		status = "failed"
+	}
+	c.EndScenarioStatus(status, false, errs)
+}
+func (c *Collector) EndScenarioStatus(status string, hardGate bool, errs []error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
-	s := Scenario{Name: c.scenario, Passed: passed, StartedAt: c.scenarioStart, FinishedAt: now, WallClockMS: float64(now.Sub(c.scenarioStart).Microseconds()) / 1000, Operations: c.scenarioOps}
+	s := Scenario{Name: c.scenario, Status: status, Passed: status == "passed", HardGate: hardGate, StartedAt: c.scenarioStart, FinishedAt: now, WallClockMS: float64(now.Sub(c.scenarioStart).Microseconds()) / 1000, Operations: c.scenarioOps}
 	for _, e := range errs {
 		s.Errors = append(s.Errors, e.Error())
 	}
@@ -144,6 +217,14 @@ func (c *Collector) ObserveWire(op string, req, resp int64, d time.Duration, err
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.score.Wire = append(c.score.Wire, WireSample{Operation: op, RequestBytes: req, ResponseBytes: resp, LatencyMS: float64(d.Microseconds()) / 1000, Success: err == nil, PlaintextDetected: plaintext})
+	c.score.Efficiency.RoundTrips++
+	c.score.Efficiency.RequestBytes += req
+	c.score.Efficiency.ResponseBytes += resp
+	c.score.Efficiency.TotalWireBytes += req + resp
+	c.score.Efficiency.AgentInputBytes += req
+	c.score.Efficiency.AgentOutputBytes += resp
+	c.score.Efficiency.EstimatedInputTokens += EstimateTokens(req)
+	c.score.Efficiency.EstimatedOutputTokens += EstimateTokens(resp)
 	if plaintext {
 		c.score.Reliability.EncryptionViolations++
 		c.score.InvalidReasons = append(c.score.InvalidReasons, "plaintext content observed on contract wire")
@@ -182,6 +263,13 @@ func (c *Collector) Snapshot() Scorecard {
 		}
 	}
 	s.Metrics["successful_operations"] = float64(successful)
+	s.Efficiency.Operations = len(s.Operations)
+	s.Efficiency.SuccessfulActions = successful
+	s.Efficiency.EstimatedTotalTokens = s.Efficiency.EstimatedInputTokens + s.Efficiency.EstimatedOutputTokens
+	if s.Efficiency.SuccessfulActions > 0 {
+		s.Metrics["bytes_per_successful_action"] = float64(s.Efficiency.TotalWireBytes) / float64(s.Efficiency.SuccessfulActions)
+		s.Metrics["tokens_per_successful_action"] = float64(s.Efficiency.EstimatedTotalTokens) / float64(s.Efficiency.SuccessfulActions)
+	}
 	if v, ok := s.Metrics["run_wall_clock_ms"]; ok && successful > 0 {
 		s.Metrics["resource_cost_ms_per_successful_operation"] = v / float64(successful)
 	}
@@ -190,11 +278,17 @@ func (c *Collector) Snapshot() Scorecard {
 	}
 	s.Passed = len(s.InvalidReasons) == 0
 	for _, v := range s.Scenarios {
-		if !v.Passed {
+		if !v.Passed && (v.Status != "unsupported" || v.HardGate) {
 			s.Passed = false
 		}
 	}
 	return s
+}
+func EstimateTokens(bytes int64) int64 {
+	if bytes <= 0 {
+		return 0
+	}
+	return (bytes + 3) / 4
 }
 func (c *Collector) WriteJSON(path string) error {
 	b, e := json.MarshalIndent(c.Snapshot(), "", "  ")

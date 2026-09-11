@@ -3,7 +3,9 @@ package benchmark
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -27,6 +29,9 @@ type Config struct {
 	BrowserURL             string
 	BrowserCommand         string
 	BrowserSelectors       browser.Selectors
+	Profile                string
+	Seed                   int64
+	RequireV2              bool
 }
 
 func (c *Config) defaults() {
@@ -51,16 +56,34 @@ func (c *Config) defaults() {
 	if c.MaxNotificationLatency == 0 {
 		c.MaxNotificationLatency = 5 * time.Second
 	}
+	if c.Profile == "" {
+		c.Profile = "full"
+	}
+	if c.Seed == 0 {
+		c.Seed = 20260910
+	}
+	if p, ok := Profile(c.Profile); ok && p.RequiresV2 {
+		c.RequireV2 = true
+	}
 }
 
 type Session struct {
 	client    contract.Client
 	identity  contract.Identity
 	telemetry *telemetry.Collector
+	v2        contract.V2Client
+	discovery contract.DiscoveryClient
 }
 
 func newSession(c contract.Client, t *telemetry.Collector) *Session {
-	return &Session{client: c, telemetry: t}
+	s := &Session{client: c, telemetry: t}
+	if v, ok := c.(contract.V2Client); ok {
+		s.v2 = v
+	}
+	if d, ok := c.(contract.DiscoveryClient); ok {
+		s.discovery = d
+	}
+	return s
 }
 func (s *Session) identityID() string { return s.identity.ID }
 func call[T any](s *Session, name string, fn func() (T, error)) (T, error) {
@@ -83,6 +106,12 @@ func (s *Session) CreateOrLoadIdentity(c context.Context, n string) (contract.Id
 	return v, e
 }
 func (s *Session) PublishProfile(c context.Context, p contract.Profile) error {
+	for _, value := range []string{p.DisplayName, p.Bio, p.Repository, p.Harness, p.CurrentWork, p.Limitations} {
+		s.telemetry.RegisterPlaintext(value)
+	}
+	for _, value := range append(append([]string{}, p.Capabilities...), p.CollaborationTopics...) {
+		s.telemetry.RegisterPlaintext(value)
+	}
 	return s.callErr("PublishProfile", func() error { return s.client.PublishProfile(c, p) })
 }
 func (s *Session) GetPresence(c context.Context, id string) (contract.Presence, error) {
@@ -188,12 +217,16 @@ type Harness struct {
 	identities map[string]contract.Identity
 	groupID    string
 	postID     string
+	serverID   string
+	groupIDV2  string
+	postIDV2   string
 	browser    browser.Driver
+	rng        *rand.Rand
 }
 
 func New(factory Factory, cfg Config, t *telemetry.Collector, driver browser.Driver) *Harness {
 	cfg.defaults()
-	return &Harness{factory: factory, cfg: cfg, t: t, sessions: map[string]*Session{}, identities: map[string]contract.Identity{}, browser: driver}
+	return &Harness{factory: factory, cfg: cfg, t: t, sessions: map[string]*Session{}, identities: map[string]contract.Identity{}, browser: driver, rng: rand.New(rand.NewSource(cfg.Seed))}
 }
 
 func (h *Harness) setup(ctx context.Context) error {
@@ -238,6 +271,11 @@ func (h *Harness) reconnect(ctx context.Context, name string) (*Session, error) 
 
 func (h *Harness) Run(ctx context.Context) telemetry.Scorecard {
 	started := time.Now()
+	h.t.SetRunMetadata(h.cfg.Profile, h.cfg.Seed)
+	if _, ok := Profile(h.cfg.Profile); !ok {
+		h.t.AddInvalid("unknown benchmark profile: " + h.cfg.Profile)
+		return h.t.Snapshot()
+	}
 	if e := h.setup(ctx); e != nil {
 		h.t.AddInvalid(e.Error())
 		return h.t.Snapshot()
@@ -245,26 +283,65 @@ func (h *Harness) Run(ctx context.Context) telemetry.Scorecard {
 	stopResources := startResourceSampler(ctx, h.cfg, h.t)
 	defer stopResources()
 	scenarios := []struct {
-		name string
-		fn   func(context.Context) []error
+		name     string
+		category string
+		hard     bool
+		fn       func(context.Context) []error
 	}{
-		{"identity_lifecycle", h.identityLifecycle}, {"discovery_bootstrap_events", h.discoveryScenario}, {"dm_round_trip_resume", h.dmScenario}, {"group_membership_history", h.groupScenario}, {"post_nested_thread", h.postScenario}, {"concurrent_mixed_writers", h.concurrentScenario}, {"human_agent_parity", h.humanParityScenario}, {"disconnect_reconnect_load", h.loadScenario}, {"unauthorized_access", h.unauthorizedScenario}, {"growing_history", h.growingHistoryScenario}, {"presence_notifications", h.presenceScenario},
+		{"identity_lifecycle", "core", true, h.identityLifecycle}, {"discovery_bootstrap_events", "core", true, h.discoveryScenario}, {"dm_round_trip_resume", "core", true, h.dmScenario}, {"group_membership_history", "core", true, h.groupScenario}, {"post_nested_thread", "core", true, h.postScenario}, {"concurrent_mixed_writers", "load", true, h.concurrentScenario}, {"human_agent_parity", "core", true, h.humanParityScenario}, {"disconnect_reconnect_load", "reliability", true, h.loadScenario}, {"unauthorized_access", "security", true, h.unauthorizedScenario}, {"growing_history", "load", true, h.growingHistoryScenario}, {"presence_notifications", "core", true, h.presenceScenario},
+		{"server_lifecycle", "server", true, h.serverLifecycleScenario}, {"server_permissions_discovery", "permissions", true, h.serverPermissionsScenario}, {"server_groups", "groups", true, h.serverGroupsScenario}, {"server_forums_notifications", "forums", true, h.serverForumsScenario}, {"declarative_batch", "declarative", true, h.declarativeScenario}, {"delta_response_shaping", "declarative", true, h.deltaScenario}, {"protocol_discovery_schemas", "transport", true, h.protocolDiscoveryScenario}, {"transport_interoperability", "transport", false, h.transportScenario}, {"agent_efficiency_jobs", "efficiency", true, h.agentEfficiencyScenario}, {"v2_scale_load", "load", true, h.v2ScaleScenario},
 	}
 	for _, sc := range scenarios {
-		h.t.BeginScenario(sc.name)
-		errs := sc.fn(ctx)
-		h.t.EndScenario(len(errs) == 0, errs)
+		if !profileAllows(h.cfg.Profile, sc.category) {
+			continue
+		}
+		h.runScenario(ctx, sc.name, sc.category, sc.hard, sc.fn)
 	}
-	if h.browser == nil || h.cfg.BrowserURL == "" {
-		h.t.AddInvalid("browser scenario requires --ui-url and a Chromium driver")
-	} else {
-		h.t.BeginScenario("browser_human_ui")
-		errs := h.browserScenario(ctx)
-		h.t.EndScenario(len(errs) == 0, errs)
+	if profileAllows(h.cfg.Profile, "browser") {
+		if h.browser == nil || h.cfg.BrowserURL == "" {
+			h.t.AddInvalid("browser scenario requires --ui-url and a Chromium driver")
+			h.runScenario(ctx, "browser_human_ui", "browser", true, func(context.Context) []error {
+				return []error{fmt.Errorf("browser scenario requires --ui-url and a Chromium driver")}
+			})
+		} else {
+			h.runScenario(ctx, "browser_human_ui", "browser", true, h.browserScenario)
+		}
 	}
 	h.t.Metric("run_wall_clock_ms", float64(time.Since(started).Microseconds())/1000)
+	snapshot := h.t.Snapshot()
+	h.t.SetEfficiencyScore(EfficiencyScore(snapshot))
 	return h.t.Snapshot()
 }
+
+func (h *Harness) runScenario(ctx context.Context, name, category string, hard bool, fn func(context.Context) []error) {
+	h.t.BeginScenario(name)
+	errs := fn(ctx)
+	status := "passed"
+	if len(errs) > 0 {
+		status = "failed"
+		unsupported := true
+		for _, e := range errs {
+			var u UnsupportedError
+			if !errors.As(e, &u) {
+				unsupported = false
+				break
+			}
+		}
+		if unsupported {
+			status = "unsupported"
+			if hard && h.cfg.RequireV2 {
+				h.t.AddInvalid(name + ": required capability unsupported")
+			}
+		}
+	}
+	h.t.EndScenarioStatus(status, hard, errs)
+	categoryScore := 0.0
+	if status == "passed" {
+		categoryScore = 100
+	}
+	h.t.SetCategory(category, status == "passed", hard, categoryScore, status)
+}
+func (h *Harness) label(prefix string) string { return fmt.Sprintf("%s-%08x", prefix, h.rng.Uint32()) }
 
 func (h *Harness) identityLifecycle(ctx context.Context) []error {
 	a := h.sessions["agent-a"]
@@ -883,6 +960,11 @@ func (h *Harness) browserScenario(ctx context.Context) []error {
 	}
 	if _, e := browser.RunHumanFlow(ctx, h.browser, browser.Config{URL: h.cfg.BrowserURL, Selectors: h.cfg.BrowserSelectors, IdentityID: hu.identityID(), Observer: func(name string, d time.Duration, e error) { h.t.Observe("", "Browser."+name, d, e == nil, e) }}, h.groupID, h.postID, a.identityID()); e != nil {
 		return []error{e}
+	}
+	if h.serverID != "" && h.cfg.BrowserSelectors.ServerVisible != "" {
+		if _, e := browser.RunAdminFlow(ctx, h.browser, browser.Config{URL: h.cfg.BrowserURL, Selectors: h.cfg.BrowserSelectors, IdentityID: hu.identityID(), Observer: func(name string, d time.Duration, e error) { h.t.Observe("", "BrowserAdmin."+name, d, e == nil, e) }}, h.serverID); e != nil {
+			return []error{e}
+		}
 	}
 	dm, e := a.GetDMHistory(ctx, hu.identityID())
 	if e != nil || !hasContent(dm, "human-ui-dm") {

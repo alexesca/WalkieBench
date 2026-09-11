@@ -63,29 +63,44 @@ func (a AgentBrowser) AssertVisible(ctx context.Context, s, needle string) error
 func (a AgentBrowser) Close(ctx context.Context) error { _, e := a.run(ctx, "close"); return e }
 
 type Selectors struct {
-	IdentityID     string `json:"identity_id"`
-	IdentityLoad   string `json:"identity_load"`
-	DMRecipient    string `json:"dm_recipient"`
-	DMContent      string `json:"dm_content"`
-	DMSend         string `json:"dm_send"`
-	DMVisible      string `json:"dm_visible"`
-	GroupName      string `json:"group_name"`
-	GroupCreate    string `json:"group_create"`
-	GroupID        string `json:"group_id"`
-	GroupMessage   string `json:"group_message"`
-	GroupSend      string `json:"group_send"`
-	GroupVisible   string `json:"group_visible"`
-	PostTitle      string `json:"post_title"`
-	PostContent    string `json:"post_content"`
-	PostCreate     string `json:"post_create"`
-	PostVisible    string `json:"post_visible"`
-	ThreadID       string `json:"thread_id"`
-	CommentContent string `json:"comment_content"`
-	CommentSend    string `json:"comment_send"`
-	CommentVisible string `json:"comment_visible"`
-	Follow         string `json:"follow"`
-	React          string `json:"react"`
-	Presence       string `json:"presence"`
+	IdentityID      string `json:"identity_id"`
+	IdentityLoad    string `json:"identity_load"`
+	DMRecipient     string `json:"dm_recipient"`
+	DMContent       string `json:"dm_content"`
+	DMSend          string `json:"dm_send"`
+	DMVisible       string `json:"dm_visible"`
+	GroupName       string `json:"group_name"`
+	GroupCreate     string `json:"group_create"`
+	GroupID         string `json:"group_id"`
+	GroupMessage    string `json:"group_message"`
+	GroupSend       string `json:"group_send"`
+	GroupVisible    string `json:"group_visible"`
+	PostTitle       string `json:"post_title"`
+	PostContent     string `json:"post_content"`
+	PostCreate      string `json:"post_create"`
+	PostVisible     string `json:"post_visible"`
+	ThreadID        string `json:"thread_id"`
+	CommentContent  string `json:"comment_content"`
+	CommentSend     string `json:"comment_send"`
+	CommentVisible  string `json:"comment_visible"`
+	ThreadVisible   string `json:"thread_visible"`
+	ThreadStructure string `json:"thread_structure"`
+	Notification    string `json:"notifications_visible"`
+	OrderVisible    string `json:"ordered_activity_visible"`
+	Follow          string `json:"follow"`
+	React           string `json:"react"`
+	Presence        string `json:"presence"`
+	ServerID        string `json:"server_id"`
+	ServerVisible   string `json:"server_visible"`
+	MemberVisible   string `json:"server_members_visible"`
+	RequestVisible  string `json:"server_requests_visible"`
+	ApproveRequest  string `json:"server_approve_request"`
+	RoleParticipant string `json:"server_role_participant"`
+	RoleValue       string `json:"server_role_value"`
+	RoleSave        string `json:"server_role_save"`
+	GroupAdmin      string `json:"group_admin_visible"`
+	Moderation      string `json:"moderation_visible"`
+	AuditVisible    string `json:"audit_visible"`
 }
 type Config struct {
 	URL        string
@@ -150,6 +165,14 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 			return nil, err
 		}
 	}
+	if c.Selectors.GroupName != "" && c.Selectors.GroupCreate != "" {
+		if err := d.Fill(ctx, c.Selectors.GroupName, "human-ui-group"); err != nil {
+			return nil, err
+		}
+		if err := d.Click(ctx, c.Selectors.GroupCreate); err != nil {
+			return nil, err
+		}
+	}
 	check := func(sel, needle string) error { return d.AssertVisible(ctx, sel, needle) }
 	if err := d.Fill(ctx, c.Selectors.DMRecipient, agentID); err != nil {
 		return nil, err
@@ -200,9 +223,70 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 			}
 		}
 	}
+	for _, p := range []struct{ s, n string }{{c.Selectors.ThreadVisible, postID}, {c.Selectors.ThreadStructure, "human-ui-comment"}, {c.Selectors.Notification, "notification"}, {c.Selectors.OrderVisible, "human-ui-group"}} {
+		if p.s != "" {
+			if err := check(p.s, p.n); err != nil {
+				return nil, err
+			}
+		}
+	}
 	s, e := d.Snapshot(ctx)
 	if e != nil {
 		return nil, e
+	}
+	return []string{s}, nil
+}
+
+// RunAdminFlow checks the human administration surface using only visible
+// controls. Empty optional action selectors are skipped so the same driver can
+// target an implementation that exposes a read-only subset of administration.
+func RunAdminFlow(ctx context.Context, d Driver, c Config, serverID string) ([]string, error) {
+	d = observedDriver{Driver: d, observer: c.Observer}
+	if err := d.Open(ctx, c.URL); err != nil {
+		return nil, err
+	}
+	defer d.Close(context.Background())
+	if c.Selectors.ServerID != "" {
+		if err := d.Fill(ctx, c.Selectors.ServerID, serverID); err != nil {
+			return nil, err
+		}
+		if err := d.Press(ctx, c.Selectors.ServerID, "Enter"); err != nil {
+			return nil, err
+		}
+	}
+	for _, p := range []struct{ selector, needle string }{
+		{c.Selectors.ServerVisible, serverID},
+		{c.Selectors.MemberVisible, "member"},
+		{c.Selectors.RequestVisible, "request"},
+		{c.Selectors.GroupAdmin, "group"},
+		{c.Selectors.Moderation, "post"},
+		{c.Selectors.AuditVisible, "audit"},
+	} {
+		if p.selector != "" {
+			if err := d.AssertVisible(ctx, p.selector, p.needle); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if c.Selectors.ApproveRequest != "" {
+		if err := d.Click(ctx, c.Selectors.ApproveRequest); err != nil {
+			return nil, err
+		}
+	}
+	if c.Selectors.RoleParticipant != "" && c.Selectors.RoleValue != "" && c.Selectors.RoleSave != "" {
+		if err := d.Fill(ctx, c.Selectors.RoleParticipant, "agent-b"); err != nil {
+			return nil, err
+		}
+		if err := d.Fill(ctx, c.Selectors.RoleValue, "moderator"); err != nil {
+			return nil, err
+		}
+		if err := d.Click(ctx, c.Selectors.RoleSave); err != nil {
+			return nil, err
+		}
+	}
+	s, err := d.Snapshot(ctx)
+	if err != nil {
+		return nil, err
 	}
 	return []string{s}, nil
 }

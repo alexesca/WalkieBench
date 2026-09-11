@@ -78,6 +78,95 @@ using AES-GCM with a key derived from the bearer session token. Implementations
 may provide an equivalent secure transport, but secure clients must be able to
 round-trip the documented contract values after decoding them locally.
 
+## V2 contract
+
+WalkieBench V2 adds an optional `contract.V2Client` surface without changing
+the V1 `contract.Client`. The surface is observable and implementation
+independent: it does not prescribe storage, encryption architecture, language,
+broker, database, frontend, or topology.
+
+The Server operations are `CreateServer`, `GetServer`, `UpdateServer`,
+`ListServers`, `DiscoverServers`, `JoinServer`, `RequestServerAccess`,
+`ApproveServerRequest`, `RejectServerRequest`, `InviteToServer`,
+`AcceptServerInvite`, `LeaveServer`, `RemoveServerMember`,
+`ListServerMembers`, `GetServerMember`, `ListServerRequests`,
+`ListServerInvites`, `FindServerMembers`, `ListServerRoles`,
+`SetServerRole`, `UpdateServerPermissions`, and `GetServerAudit`.
+Enrollment policies are `public`, `approval-required`, `invite-only`, and
+`closed`. Server-private state and member directories must be inaccessible
+until authorization is complete. Owner, administrator, moderator, member,
+guest, and agent are stable role vocabulary; implementations may expose a
+different internal role model if behavior is equivalent.
+
+Server-scoped group operations are `CreateGroup`, `UpdateGroup`,
+`DeleteGroup`, `DiscoverGroups`, `ListGroups`, `JoinGroup`,
+`RequestGroupAccess`, `ApproveGroupRequest`, `RejectGroupRequest`,
+`InviteToGroup`, `AcceptGroupInvite`, `LeaveGroup`, `RemoveGroupMember`, and
+`ListGroupMembers`. Group policies are `public`, `approval-required`,
+`invite-only`, and `private`/closed. Forum operations are `CreatePost`,
+`EditPost`, `Comment`, `GetThread`, `DiscoverPosts`, `SearchPosts`,
+`SharePost`, `ListNotifications`, and `MarkNotificationsRead`. They cover
+server-wide, group-only, directly shared, and private visibility, nested
+replies, mentions, follows, reactions, and notification recovery.
+
+`ApplyManifest` is declarative session bootstrap. It is idempotent for desired
+state: applying it twice cannot duplicate membership, requests, invitations,
+contacts, subscriptions, or messages. `Batch` accepts ordered operations with
+dependency IDs and returns deterministic per-operation results, including
+partial failures. `Sync` accepts a server cursor and returns only new
+authorized delta state. `ResponseOptions` supports field selection, compact
+mode, limits, pagination, unread filtering, and cursor-based reads. Primitive
+operations remain available for precise control.
+
+`DiscoveryClient` exposes `DiscoverProtocol`, `GetSchema`, `GetHelp`,
+`ListPresets`, `ApplyPreset`, and `ListTransports`. A discovery document must
+identify protocol/version, capabilities, operations, transports, schema and
+documentation locations, authentication requirements, and usage hints.
+Schemas must be machine-readable and consistent with actual behavior. The
+transport capability list allows optional HTTP, streaming HTTP, WebSocket, MCP,
+CLI/stdio, local socket, filesystem, or future adapters. Implementations
+advertising multiple read/write transports are tested for identity, membership,
+message, history, cursor, and authorization parity.
+
+## Profiles, metrics, and scoring
+
+Use `--profile` to run a focused subset: `core`, `security`, `server`,
+`permissions`, `groups`, `forums`, `agent-efficiency`, `declarative`,
+`transport`, `browser`, `reliability`, `load`, or `full`. `full` requires V2;
+focused V1 profiles remain useful against older implementations. Use `--seed`
+for reproducible randomized names and content. V2 profiles report an explicit
+`unsupported` scenario when a client lacks V2; required profiles mark that
+absence invalid instead of silently skipping it.
+
+Each scorecard contains raw operations, wire samples, percentile summaries,
+resource samples, scenarios, category outcomes, reliability counters, and
+metrics. Hard gates include zero message loss, ordering violations, failed
+required resumes, accepted unauthorized access, invalid membership transitions,
+cross-Server or cross-group leakage, duplicate idempotent state, plaintext
+content on a protected contract wire, and failed required browser assertions.
+A failed hard gate invalidates the run regardless of speed.
+
+Agent Efficiency records operations, round trips, request/response/total wire
+bytes, agent-visible bytes, deterministic token estimates, retries,
+maintenance operations, successful actions, and time to first collaboration.
+Token estimates use `(serialized_bytes + 3) / 4`, a stable proxy that needs no
+online tokenizer. The bounded efficiency score is zero unless all gates pass,
+then is:
+
+```text
+100 * (0.30 * min(1, 40 / operations)
+     + 0.20 * min(1, 10 / round_trips)
+     + 0.25 * min(1, 4000 / estimated_total_tokens)
+     + 0.25 * min(1, 5000 / time_to_first_collaboration_ms))
+```
+
+The flagship onboarding job starts with a connection target, discovers the
+protocol, joins a public Server, finds a participant by capability, sends a
+DM, and verifies delivery. Primitive, batch, and manifest paths are compared
+by correctness first, then operations, round trips, bytes, tokens, retries,
+and elapsed time. The JSON scorecard is suitable for machine comparison after
+every run.
+
 ## Scenarios and gates
 
 Every scenario records each contract operation, wall-clock duration, errors,
@@ -85,11 +174,16 @@ wire bytes, and latency percentiles. The run covers identity reconnect, DM
 delivery and history, group membership changes, nested threads and followers,
 mixed concurrent writers, human identity parity, controlled offline catch-up,
 unauthorized reads and writes, growing histories, presence, notifications,
-discovery, and browser-driven human actions.
+discovery, Server policies and roles, server-scoped groups and forums,
+mentions and notifications, manifests, batches, cursor deltas, response
+shaping, transport discovery, agent onboarding, scale, and browser-driven
+human actions.
 
 The hard gates are message loss, ordering violations, failed resume, accepted
 unauthorized access, plaintext test content on the wire, missing human/agent
-visibility, and missing browser assertions. Performance metrics include
+visibility, and missing browser assertions. V2 adds Server policy, role,
+isolation, manifest, batch, delta, discovery/schema, and transport gates.
+Performance metrics include
 delivery, presence, resume, and notification latency; messages per second;
 history retrieval at increasing sizes; wire bytes; resource samples; and wall
 clock and operation counts.
@@ -104,14 +198,24 @@ and `snapshot`. By default it addresses accessible controls with these
 `dm-messages`, `group-id`, `group-message`, `group-send`, `group-messages`,
 `post-title`, `post-content`, `post-create`, `posts`, `thread-id`,
 `comment-content`, `comment-send`, `comments`, `thread-follow`, `react`, and
-`presence`. The `*-messages`, `posts`, and `comments` selectors point to
-visible content containers, so assertions do not rely on input values.
+`presence`. Optional `thread-visible`, `thread-structure`,
+`notifications-visible`, and `ordered-activity-visible` selectors add visible
+thread, notification, and ordering assertions. The `*-messages`, `posts`, and
+`comments` selectors point to visible content containers, so assertions do not
+rely on input values.
 
 Pass `--browser-selectors selectors.json` to override them. The JSON file uses
 the selector field names in `browser.Selectors`. The browser flow loads the
 benchmark human identity, writes a DM and group message, creates a post,
 writes a comment, follows, reacts, checks visible text and presence, captures a
 snapshot, then uses an agent client to verify the same content is readable.
+When V2 administration selectors are configured it also visibly checks Server,
+member, request, group, moderation, and audit surfaces and exercises approval
+and role controls. The additional selector names are `server-id`,
+`server-visible`, `server-members-visible`, `server-requests-visible`,
+`server-approve-request`, `server-role-participant`, `server-role-value`,
+`server-role-save`, `group-admin-visible`, `moderation-visible`, and
+`audit-visible`.
 
 ## Embedding the runner
 

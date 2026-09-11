@@ -24,3 +24,16 @@ func TestCollectorProducesPercentilesAndEncryptionGate(t *testing.T) {
 		t.Fatalf("wire sample missing plaintext detection: %+v", s.Wire)
 	}
 }
+
+func TestEstimateTokensIsDeterministic(t *testing.T) {
+	for _, tc := range []struct {
+		bytes int64
+		want  int64
+	}{
+		{0, 0}, {1, 1}, {4, 1}, {5, 2}, {100, 25},
+	} {
+		if got := EstimateTokens(tc.bytes); got != tc.want {
+			t.Fatalf("EstimateTokens(%d) = %d, want %d", tc.bytes, got, tc.want)
+		}
+	}
+}
