@@ -61,3 +61,26 @@ func TestRunAdminFlowUsesVisibleAssertionsAndActions(t *testing.T) {
 		}
 	}
 }
+
+type eventuallyVisibleDriver struct {
+	fakeDriver
+	attempts int
+}
+
+func (f *eventuallyVisibleDriver) AssertVisible(_ context.Context, selector, needle string) error {
+	f.attempts++
+	if f.attempts < 3 {
+		return &assertionError{selector: selector, needle: needle}
+	}
+	return nil
+}
+
+func TestWaitVisibleRetriesAsyncUIState(t *testing.T) {
+	f := &eventuallyVisibleDriver{}
+	if err := waitVisible(context.Background(), f, "presence", "online"); err != nil {
+		t.Fatal(err)
+	}
+	if f.attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", f.attempts)
+	}
+}

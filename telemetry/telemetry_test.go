@@ -37,3 +37,17 @@ func TestEstimateTokensIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaintextProbeIgnoresJSONFieldNames(t *testing.T) {
+	c := New()
+	c.RegisterPlaintext("collaboration")
+	if c.ContainsPlaintext([]byte(`{"examples":["collaboration"]}`)) {
+		t.Fatal("public help text was treated as protected content")
+	}
+	if c.ContainsPlaintext([]byte(`{"collaboration_topics":["ht1:encrypted"]}`)) {
+		t.Fatal("field name was treated as plaintext content")
+	}
+	if !c.ContainsPlaintext([]byte(`{"collaboration_topics":["collaboration"]}`)) {
+		t.Fatal("plaintext value was not detected")
+	}
+}

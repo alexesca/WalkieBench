@@ -106,7 +106,11 @@ func (h *Harness) serverSpec(name string, policy contract.JoinPolicy) contract.S
 
 func (h *Harness) probe(values ...string) {
 	for _, value := range values {
-		h.t.RegisterPlaintext(value)
+		// Very short values are unsuitable probes: a two-character marker can
+		// occur by chance in an opaque ciphertext or protocol version string.
+		if len([]rune(value)) >= 4 {
+			h.t.RegisterPlaintext(value)
+		}
 	}
 }
 

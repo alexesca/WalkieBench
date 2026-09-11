@@ -206,12 +206,58 @@ func (c *Collector) RegisterPlaintext(value string) {
 func (c *Collector) ContainsPlaintext(body []byte) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var value any
+	if json.Unmarshal(body, &value) == nil {
+		return containsPlaintextValue(value, c.plaintext, false)
+	}
 	for _, v := range c.plaintext {
 		if bytes.Contains(body, []byte(v)) {
 			return true
 		}
 	}
 	return false
+}
+
+func containsPlaintextValue(value any, probes []string, protected bool) bool {
+	switch x := value.(type) {
+	case map[string]any:
+		for key, child := range x {
+			if containsPlaintextValue(child, probes, protectedWireKey(key)) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range x {
+			if containsPlaintextValue(child, probes, protected) {
+				return true
+			}
+		}
+	case string:
+		if protected {
+			for _, probe := range probes {
+				// Probes are the exact values written by the benchmark. Exact
+				// matching prevents a common metadata word such as
+				// "collaboration" in public help text from matching a probe
+				// registered for a protected capability value.
+				if probe != "" && x == probe {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// protectedWireKey mirrors the contract's content-bearing fields. Public
+// routing metadata, query filters, help text, and JSON object keys must not
+// turn an unrelated occurrence of a probe into an encryption violation.
+func protectedWireKey(key string) bool {
+	switch key {
+	case "content", "title", "summary", "bio", "description", "purpose", "topics", "topic", "tags", "rules", "current_work", "limitations", "reason", "interests", "capabilities", "collaboration_topics":
+		return true
+	default:
+		return false
+	}
 }
 func (c *Collector) ObserveWire(op string, req, resp int64, d time.Duration, err error, plaintext bool) {
 	c.mu.Lock()

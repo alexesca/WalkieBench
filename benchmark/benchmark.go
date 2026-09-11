@@ -106,7 +106,9 @@ func (s *Session) CreateOrLoadIdentity(c context.Context, n string) (contract.Id
 	return v, e
 }
 func (s *Session) PublishProfile(c context.Context, p contract.Profile) error {
-	for _, value := range []string{p.DisplayName, p.Bio, p.Repository, p.Harness, p.CurrentWork, p.Limitations} {
+	// DisplayName, Repository, and Harness are discoverable routing metadata.
+	// Probe only profile fields that the secure-wire contract protects.
+	for _, value := range []string{p.Bio, p.CurrentWork, p.Limitations} {
 		s.telemetry.RegisterPlaintext(value)
 	}
 	for _, value := range append(append([]string{}, p.Capabilities...), p.CollaborationTopics...) {

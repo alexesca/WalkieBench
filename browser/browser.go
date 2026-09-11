@@ -173,7 +173,7 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 			return nil, err
 		}
 	}
-	check := func(sel, needle string) error { return d.AssertVisible(ctx, sel, needle) }
+	check := func(sel, needle string) error { return waitVisible(ctx, d, sel, needle) }
 	if err := d.Fill(ctx, c.Selectors.DMRecipient, agentID); err != nil {
 		return nil, err
 	}
@@ -235,6 +235,24 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 		return nil, e
 	}
 	return []string{s}, nil
+}
+
+func waitVisible(ctx context.Context, d Driver, selector, needle string) error {
+	deadline := time.Now().Add(5 * time.Second)
+	var last error
+	for time.Now().Before(deadline) {
+		if err := d.AssertVisible(ctx, selector, needle); err == nil {
+			return nil
+		} else {
+			last = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	return last
 }
 
 // RunAdminFlow checks the human administration surface using only visible
