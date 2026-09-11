@@ -3,6 +3,7 @@ package contract
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // JoinPolicy is observable enrollment policy. Implementations may realize it
@@ -35,6 +36,51 @@ const (
 	RoleGuest     MemberRole = "guest"
 	RoleAgent     MemberRole = "agent"
 )
+
+type GroupRole string
+
+const (
+	GroupRoleOwner  GroupRole = "owner"
+	GroupRoleAdmin  GroupRole = "administrator"
+	GroupRoleMember GroupRole = "member"
+)
+
+const (
+	GroupPermissionView       = "view_group"
+	GroupPermissionHistory    = "view_history"
+	GroupPermissionSend       = "send_messages"
+	GroupPermissionInvite     = "invite_members"
+	GroupPermissionApprove    = "approve_members"
+	GroupPermissionRemove     = "remove_members"
+	GroupPermissionManage     = "manage_settings"
+	GroupPermissionManageRole = "manage_roles"
+)
+
+const (
+	PermissionViewServer         = "view_server"
+	PermissionViewMembers        = "view_members"
+	PermissionSendMessages       = "send_messages"
+	PermissionInviteMembers      = "invite_members"
+	PermissionApproveMembers     = "approve_members"
+	PermissionRemoveMembers      = "remove_members"
+	PermissionCreateGroups       = "create_groups"
+	PermissionManageGroups       = "manage_groups"
+	PermissionCreatePosts        = "create_posts"
+	PermissionModeratePosts      = "moderate_posts"
+	PermissionManageRoles        = "manage_roles"
+	PermissionManagePermissions  = "manage_permissions"
+	PermissionManageSettings     = "manage_settings"
+	PermissionViewAdministration = "view_administration"
+	PermissionViewAudit          = "view_audit"
+)
+
+var RequiredServerPermissions = []string{
+	PermissionViewServer, PermissionViewMembers, PermissionSendMessages,
+	PermissionInviteMembers, PermissionApproveMembers, PermissionRemoveMembers,
+	PermissionCreateGroups, PermissionManageGroups, PermissionCreatePosts,
+	PermissionModeratePosts, PermissionManageRoles, PermissionManagePermissions,
+	PermissionManageSettings, PermissionViewAdministration, PermissionViewAudit,
+}
 
 type ResponseOptions struct {
 	Select      []string `json:"select,omitempty"`
@@ -112,6 +158,8 @@ type ServerInvite struct {
 	InviteeID string `json:"invitee_id"`
 	InvitedBy string `json:"invited_by"`
 	Status    string `json:"status"`
+	CreatedAt string `json:"created_at,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
 type ServerMember struct {
@@ -176,13 +224,30 @@ type GroupAccessRequest struct {
 	Requester string `json:"requester"`
 	Reason    string `json:"reason,omitempty"`
 	Status    string `json:"status"`
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 type GroupInvite struct {
 	ID        string `json:"id"`
 	GroupID   string `json:"group_id"`
 	InviteeID string `json:"invitee_id"`
+	InvitedBy string `json:"invited_by"`
 	Status    string `json:"status"`
+	CreatedAt string `json:"created_at,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+type GroupMember struct {
+	ServerMember
+	GroupID          string    `json:"group_id"`
+	GroupRole        GroupRole `json:"group_role"`
+	GroupPermissions []string  `json:"group_permissions,omitempty"`
+}
+
+type GroupPermissionChange struct {
+	Role       GroupRole `json:"role"`
+	Permission string    `json:"permission"`
+	Allowed    bool      `json:"allowed"`
 }
 
 type PostSpec struct {
@@ -192,6 +257,7 @@ type PostSpec struct {
 	Content    string     `json:"content"`
 	Visibility Visibility `json:"visibility"`
 	Mentions   []string   `json:"mentions,omitempty"`
+	SharedWith []string   `json:"shared_with,omitempty"`
 }
 
 type PostPatch struct {
@@ -216,6 +282,7 @@ type PostView struct {
 	GroupID    string     `json:"group_id,omitempty"`
 	Visibility Visibility `json:"visibility"`
 	Mentions   []string   `json:"mentions,omitempty"`
+	SharedWith []string   `json:"shared_with,omitempty"`
 }
 
 type Notification struct {
@@ -229,6 +296,18 @@ type Notification struct {
 	CreatedAt string `json:"created_at,omitempty"`
 	Read      bool   `json:"read"`
 }
+
+const (
+	NotificationDM                = "dm"
+	NotificationMention           = "mention"
+	NotificationReply             = "reply"
+	NotificationReaction          = "reaction"
+	NotificationInvitation        = "invitation"
+	NotificationMembershipRequest = "membership_request"
+	NotificationRequestApproved   = "request_approved"
+	NotificationRequestRejected   = "request_rejected"
+	NotificationAdminActivity     = "admin_activity"
+)
 
 type NotificationQuery struct {
 	AfterSequence uint64          `json:"after_sequence,omitempty"`
@@ -244,6 +323,9 @@ type Manifest struct {
 	Identity   ManifestIdentity   `json:"identity"`
 	Membership ManifestMembership `json:"membership,omitempty"`
 	Discover   ManifestDiscovery  `json:"discover,omitempty"`
+	Groups     ManifestGroups     `json:"groups,omitempty"`
+	Contacts   []string           `json:"contacts,omitempty"`
+	Follows    []string           `json:"follows,omitempty"`
 	Sync       ManifestSync       `json:"sync,omitempty"`
 	Presence   ManifestPresence   `json:"presence,omitempty"`
 	Response   ResponseOptions    `json:"response,omitempty"`
@@ -263,6 +345,11 @@ type ManifestDiscovery struct {
 	Harness      string   `json:"harness,omitempty"`
 	Limit        int      `json:"limit,omitempty"`
 }
+type ManifestGroups struct {
+	Discover   bool `json:"discover,omitempty"`
+	JoinPublic bool `json:"joinPublic,omitempty"`
+	Limit      int  `json:"limit,omitempty"`
+}
 type ManifestSync struct {
 	Inbox    bool   `json:"inbox,omitempty"`
 	Mentions bool   `json:"mentions,omitempty"`
@@ -279,6 +366,8 @@ type ManifestResult struct {
 	AccessRequest  *ServerAccessRequest `json:"access_request,omitempty"`
 	Participants   []Participant        `json:"participants,omitempty"`
 	Groups         []Group              `json:"groups,omitempty"`
+	Contacts       []Contact            `json:"contacts,omitempty"`
+	Follows        []string             `json:"follows,omitempty"`
 	UnreadActivity int                  `json:"unread_activity"`
 	Cursor         uint64               `json:"cursor"`
 }
@@ -318,12 +407,17 @@ type SyncRequest struct {
 	Response    ResponseOptions `json:"response,omitempty"`
 }
 type Delta struct {
-	Cursor        uint64          `json:"cursor"`
-	Events        []ActivityEvent `json:"events,omitempty"`
-	Notifications []Notification  `json:"notifications,omitempty"`
-	Members       []ServerMember  `json:"members,omitempty"`
-	Messages      []Message       `json:"messages,omitempty"`
-	More          bool            `json:"more"`
+	Cursor        uint64                `json:"cursor"`
+	Events        []ActivityEvent       `json:"events,omitempty"`
+	Notifications []Notification        `json:"notifications,omitempty"`
+	Members       []ServerMember        `json:"members,omitempty"`
+	Groups        []Group               `json:"groups,omitempty"`
+	Posts         []PostView            `json:"posts,omitempty"`
+	Comments      []CommentNode         `json:"comments,omitempty"`
+	Messages      []Message             `json:"messages,omitempty"`
+	Invites       []ServerInvite        `json:"invites,omitempty"`
+	Requests      []ServerAccessRequest `json:"requests,omitempty"`
+	More          bool                  `json:"more"`
 }
 
 type DiscoveryDocument struct {
@@ -338,9 +432,16 @@ type DiscoveryDocument struct {
 	UsageHints    []string `json:"usage_hints,omitempty"`
 }
 type SchemaDocument struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Schema  any    `json:"schema"`
+	Name       string                     `json:"name"`
+	Version    string                     `json:"version"`
+	Schema     any                        `json:"schema"`
+	Operations map[string]OperationSchema `json:"operations"`
+}
+type OperationSchema struct {
+	Description  string `json:"description,omitempty"`
+	AuthRequired bool   `json:"auth_required"`
+	Params       any    `json:"params"`
+	Result       any    `json:"result"`
 }
 type HelpDocument struct {
 	Commands []string `json:"commands"`
@@ -358,11 +459,13 @@ type PresetResult struct {
 	Effective Manifest `json:"effective"`
 }
 type TransportCapability struct {
-	Name      string `json:"name"`
-	Read      bool   `json:"read"`
-	Write     bool   `json:"write"`
-	Streaming bool   `json:"streaming"`
-	Address   string `json:"address,omitempty"`
+	Name          string `json:"name"`
+	Read          bool   `json:"read"`
+	Write         bool   `json:"write"`
+	Streaming     bool   `json:"streaming"`
+	Authenticated bool   `json:"authenticated"`
+	SharedState   bool   `json:"shared_state"`
+	Address       string `json:"address,omitempty"`
 }
 
 // V2Client is optional so a V1 implementation can return explicit unsupported
@@ -404,7 +507,11 @@ type V2Client interface {
 	AcceptGroupInvite(context.Context, string) error
 	LeaveGroupV2(context.Context, string) error
 	RemoveGroupMember(context.Context, string, string) error
-	ListGroupMembers(context.Context, string, ResponseOptions) ([]ServerMember, error)
+	ListGroupMembers(context.Context, string, ResponseOptions) ([]GroupMember, error)
+	ListGroupRequests(context.Context, string, ResponseOptions) ([]GroupAccessRequest, error)
+	ListGroupInvites(context.Context, string, ResponseOptions) ([]GroupInvite, error)
+	SetGroupRole(context.Context, string, string, GroupRole) error
+	UpdateGroupPermissions(context.Context, string, GroupPermissionChange) error
 
 	CreateServerPost(context.Context, PostSpec) (PostView, error)
 	EditServerPost(context.Context, string, PostPatch) (PostView, error)
@@ -426,7 +533,7 @@ type DiscoveryClient interface {
 	GetSchema(context.Context, string) (SchemaDocument, error)
 	GetHelp(context.Context) (HelpDocument, error)
 	ListPresets(context.Context) ([]Preset, error)
-	ApplyPreset(context.Context, string) (PresetResult, error)
+	ApplyPreset(context.Context, string, Manifest) (PresetResult, error)
 	ListTransports(context.Context) ([]TransportCapability, error)
 }
 
@@ -450,6 +557,15 @@ func ValidateManifest(m Manifest) error {
 	if m.Membership.Join != "" && m.Membership.Join != "if-allowed" && m.Membership.Join != "always" {
 		return fmt.Errorf("membership.join must be if-allowed or always")
 	}
+	if m.Sync.Since != "" && m.Sync.Since != "last" && m.Sync.Since != "beginning" {
+		return fmt.Errorf("sync.since must be last or beginning")
+	}
+	if m.Discover.Limit < 0 || m.Groups.Limit < 0 || m.Response.Limit < 0 {
+		return fmt.Errorf("limits cannot be negative")
+	}
+	if m.Response.Mode != "" && m.Response.Mode != "compact" && m.Response.Mode != "full" {
+		return fmt.Errorf("response.mode must be compact or full")
+	}
 	return nil
 }
 
@@ -466,6 +582,23 @@ func BatchOrder(ops []BatchOperation) ([]BatchOperation, error) {
 			return nil, fmt.Errorf("duplicate batch operation %q", op.ID)
 		}
 		byID[op.ID] = op
+		if err := validateResultReferences(op.Params); err != nil {
+			return nil, fmt.Errorf("operation %q: %w", op.ID, err)
+		}
+	}
+	for _, op := range ops {
+		deps := map[string]bool{}
+		for _, dep := range op.DependsOn {
+			deps[dep] = true
+		}
+		for _, ref := range resultReferences(op.Params) {
+			if _, ok := byID[ref]; !ok {
+				return nil, fmt.Errorf("operation %q references unknown result %q", op.ID, ref)
+			}
+			if !deps[ref] {
+				return nil, fmt.Errorf("operation %q must depend on referenced result %q", op.ID, ref)
+			}
+		}
 	}
 	var out []BatchOperation
 	var visit func(string) error
@@ -496,4 +629,71 @@ func BatchOrder(ops []BatchOperation) ([]BatchOperation, error) {
 		}
 	}
 	return out, nil
+}
+
+func validateResultReferences(v any) error {
+	switch x := v.(type) {
+	case map[string]any:
+		for _, child := range x {
+			if err := validateResultReferences(child); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, child := range x {
+			if err := validateResultReferences(child); err != nil {
+				return err
+			}
+		}
+	case string:
+		if strings.HasPrefix(x, "$ref:") {
+			parts := strings.Split(strings.TrimPrefix(x, "$ref:"), ".")
+			if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+				return fmt.Errorf("invalid result reference %q", x)
+			}
+		}
+	}
+	return nil
+}
+
+func resultReferences(v any) []string {
+	var out []string
+	switch x := v.(type) {
+	case map[string]any:
+		for _, child := range x {
+			out = append(out, resultReferences(child)...)
+		}
+	case []any:
+		for _, child := range x {
+			out = append(out, resultReferences(child)...)
+		}
+	case string:
+		if strings.HasPrefix(x, "$ref:") {
+			out = append(out, strings.Split(strings.TrimPrefix(x, "$ref:"), ".")[0])
+		}
+	}
+	return out
+}
+
+func ValidateSchemaDocument(doc SchemaDocument, advertised []string) error {
+	if doc.Name == "" || doc.Version == "" {
+		return fmt.Errorf("schema name and version are required")
+	}
+	root, ok := doc.Schema.(map[string]any)
+	if !ok || root["type"] != "object" {
+		return fmt.Errorf("schema root must be an object schema")
+	}
+	if len(doc.Operations) == 0 {
+		return fmt.Errorf("operation schemas are required")
+	}
+	for _, name := range advertised {
+		op, ok := doc.Operations[name]
+		if !ok {
+			return fmt.Errorf("advertised operation %q has no schema", name)
+		}
+		if op.Params == nil || op.Result == nil {
+			return fmt.Errorf("operation %q must describe params and result", name)
+		}
+	}
+	return nil
 }

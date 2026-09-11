@@ -51,3 +51,28 @@ func TestPlaintextProbeIgnoresJSONFieldNames(t *testing.T) {
 		t.Fatal("plaintext value was not detected")
 	}
 }
+
+func TestAgentEfficiencyExcludesBenchmarkLoadTraffic(t *testing.T) {
+	c := New()
+	c.ObserveWire("setup", 1000, 2000, time.Millisecond, nil, false)
+	c.Observe("", "setup", time.Millisecond, true, nil)
+	c.BeginAgentJob("find-and-message")
+	c.ObserveWire("DiscoverServers", 40, 80, time.Millisecond, nil, false)
+	c.Observe("", "DiscoverServers", time.Millisecond, true, nil)
+	c.ObserveWire("Heartbeat", 20, 20, time.Millisecond, nil, false)
+	c.Observe("", "Heartbeat", time.Millisecond, true, nil)
+	c.EndAgentJob(true)
+	s := c.Snapshot()
+	if s.Efficiency.Operations != 2 || s.Efficiency.RoundTrips != 2 {
+		t.Fatalf("agent efficiency included non-job traffic: %+v", s.Efficiency)
+	}
+	if s.Efficiency.TotalWireBytes != 160 || s.Efficiency.MaintenanceOperations != 1 {
+		t.Fatalf("agent efficiency counters = %+v", s.Efficiency)
+	}
+	if len(s.AgentJobs) != 1 || !s.AgentJobs[0].Passed || s.AgentJobs[0].EstimatedTokens != 40 {
+		t.Fatalf("agent job = %+v", s.AgentJobs)
+	}
+	if s.Metrics["overall_wire_bytes"] != 3160 {
+		t.Fatalf("overall wire bytes = %v", s.Metrics["overall_wire_bytes"])
+	}
+}

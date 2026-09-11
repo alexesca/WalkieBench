@@ -245,7 +245,11 @@ func (h *Harness) setup(ctx context.Context) error {
 		s.identity = id
 		h.sessions[name] = s
 		h.identities[name] = id
-		if e = s.PublishProfile(ctx, contract.Profile{DisplayName: name, Bio: "WalkieBench participant", Repository: "WalkieBench", Harness: "benchmark", Capabilities: []string{"benchmarking", "collaboration"}, CurrentWork: "WalkieBench interoperability", CollaborationTopics: []string{"realtime systems", "agent coordination"}}); e != nil {
+		kind := "agent"
+		if name == "human" {
+			kind = "human"
+		}
+		if e = s.PublishProfile(ctx, contract.Profile{DisplayName: name, Kind: kind, Bio: "WalkieBench participant", Repository: "WalkieBench", Harness: "benchmark", Capabilities: []string{"benchmarking", "collaboration"}, CurrentWork: "WalkieBench interoperability", CollaborationTopics: []string{"realtime systems", "agent coordination"}}); e != nil {
 			return fmt.Errorf("profile %s: %w", name, e)
 		}
 	}
@@ -291,7 +295,7 @@ func (h *Harness) Run(ctx context.Context) telemetry.Scorecard {
 		fn       func(context.Context) []error
 	}{
 		{"identity_lifecycle", "core", true, h.identityLifecycle}, {"discovery_bootstrap_events", "core", true, h.discoveryScenario}, {"dm_round_trip_resume", "core", true, h.dmScenario}, {"group_membership_history", "core", true, h.groupScenario}, {"post_nested_thread", "core", true, h.postScenario}, {"concurrent_mixed_writers", "load", true, h.concurrentScenario}, {"human_agent_parity", "core", true, h.humanParityScenario}, {"disconnect_reconnect_load", "reliability", true, h.loadScenario}, {"unauthorized_access", "security", true, h.unauthorizedScenario}, {"growing_history", "load", true, h.growingHistoryScenario}, {"presence_notifications", "core", true, h.presenceScenario},
-		{"server_lifecycle", "server", true, h.serverLifecycleScenario}, {"server_permissions_discovery", "permissions", true, h.serverPermissionsScenario}, {"server_groups", "groups", true, h.serverGroupsScenario}, {"server_forums_notifications", "forums", true, h.serverForumsScenario}, {"declarative_batch", "declarative", true, h.declarativeScenario}, {"delta_response_shaping", "declarative", true, h.deltaScenario}, {"protocol_discovery_schemas", "transport", true, h.protocolDiscoveryScenario}, {"transport_interoperability", "transport", false, h.transportScenario}, {"agent_efficiency_jobs", "efficiency", true, h.agentEfficiencyScenario}, {"v2_scale_load", "load", true, h.v2ScaleScenario},
+		{"security_isolation_abuse", "security", true, h.securityIsolationScenario}, {"server_lifecycle", "server", true, h.serverLifecycleScenario}, {"server_permissions_discovery", "permissions", true, h.serverPermissionsScenario}, {"granular_permission_enforcement", "permissions", true, h.granularPermissionScenario}, {"server_groups", "groups", true, h.serverGroupsScenario}, {"server_forums_notifications", "forums", true, h.serverForumsScenario}, {"notification_durability_matrix", "forums", true, h.notificationDurabilityScenario}, {"declarative_batch", "declarative", true, h.declarativeScenario}, {"delta_response_shaping", "declarative", true, h.deltaScenario}, {"protocol_discovery_schemas", "transport", true, h.protocolDiscoveryScenario}, {"transport_interoperability", "transport", false, h.transportScenario}, {"agent_efficiency_jobs", "efficiency", true, h.agentEfficiencyScenario}, {"v2_scale_load", "load", true, h.v2ScaleScenario},
 	}
 	for _, sc := range scenarios {
 		if !profileAllows(h.cfg.Profile, sc.category) {

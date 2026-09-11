@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -83,6 +84,20 @@ type Efficiency struct {
 	TimeToFirstCollaborationMS float64 `json:"time_to_first_collaboration_ms,omitempty"`
 	EfficiencyScore            float64 `json:"efficiency_score,omitempty"`
 }
+type AgentJob struct {
+	Name                  string  `json:"name"`
+	Passed                bool    `json:"passed"`
+	ElapsedMS             float64 `json:"elapsed_ms"`
+	Operations            int     `json:"operations"`
+	RoundTrips            int     `json:"round_trips"`
+	RequestBytes          int64   `json:"request_bytes"`
+	ResponseBytes         int64   `json:"response_bytes"`
+	TotalWireBytes        int64   `json:"total_wire_bytes"`
+	EstimatedTokens       int64   `json:"estimated_tokens"`
+	Retries               int     `json:"retries"`
+	FailedOperations      int     `json:"failed_operations"`
+	MaintenanceOperations int     `json:"maintenance_operations"`
+}
 type Scorecard struct {
 	Benchmark        string             `json:"benchmark"`
 	Version          string             `json:"version"`
@@ -100,6 +115,7 @@ type Scorecard struct {
 	Profile          string             `json:"profile,omitempty"`
 	Seed             int64              `json:"seed"`
 	Efficiency       Efficiency         `json:"efficiency"`
+	AgentJobs        []AgentJob         `json:"agent_jobs,omitempty"`
 	Categories       []Category         `json:"categories,omitempty"`
 }
 
@@ -119,10 +135,31 @@ type Collector struct {
 	scenario      string
 	scenarioStart time.Time
 	scenarioOps   int
+	activeJob     int
+	jobStarted    time.Time
+	overallWire   Efficiency
 }
 
 func New() *Collector {
-	return &Collector{score: Scorecard{Benchmark: "WalkieBench", Version: "2.0", StartedAt: time.Now(), OperationSummary: map[string]Metric{}, Metrics: map[string]float64{}}, values: map[string][]float64{}}
+	return &Collector{score: Scorecard{Benchmark: "WalkieBench", Version: "2.0", StartedAt: time.Now(), OperationSummary: map[string]Metric{}, Metrics: map[string]float64{}}, values: map[string][]float64{}, activeJob: -1}
+}
+func (c *Collector) BeginAgentJob(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.score.AgentJobs = append(c.score.AgentJobs, AgentJob{Name: name})
+	c.activeJob = len(c.score.AgentJobs) - 1
+	c.jobStarted = time.Now()
+}
+func (c *Collector) EndAgentJob(passed bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.activeJob < 0 {
+		return
+	}
+	job := &c.score.AgentJobs[c.activeJob]
+	job.Passed = passed
+	job.ElapsedMS = float64(time.Since(c.jobStarted).Microseconds()) / 1000
+	c.activeJob = -1
 }
 func (c *Collector) SetRunMetadata(profile string, seed int64) {
 	c.mu.Lock()
@@ -195,6 +232,20 @@ func (c *Collector) Observe(scenario, name string, d time.Duration, ok bool, err
 	}
 	c.score.Operations = append(c.score.Operations, o)
 	c.values[name] = append(c.values[name], o.LatencyMS)
+	if c.activeJob >= 0 {
+		job := &c.score.AgentJobs[c.activeJob]
+		job.Operations++
+		if !ok {
+			job.FailedOperations++
+		}
+		switch name {
+		case "Heartbeat", "Resume", "WaitForEvents", "Sync":
+			job.MaintenanceOperations++
+		}
+		if strings.Contains(strings.ToLower(name), "retry") {
+			job.Retries++
+		}
+	}
 }
 func (c *Collector) RegisterPlaintext(value string) {
 	c.mu.Lock()
@@ -263,14 +314,18 @@ func (c *Collector) ObserveWire(op string, req, resp int64, d time.Duration, err
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.score.Wire = append(c.score.Wire, WireSample{Operation: op, RequestBytes: req, ResponseBytes: resp, LatencyMS: float64(d.Microseconds()) / 1000, Success: err == nil, PlaintextDetected: plaintext})
-	c.score.Efficiency.RoundTrips++
-	c.score.Efficiency.RequestBytes += req
-	c.score.Efficiency.ResponseBytes += resp
-	c.score.Efficiency.TotalWireBytes += req + resp
-	c.score.Efficiency.AgentInputBytes += req
-	c.score.Efficiency.AgentOutputBytes += resp
-	c.score.Efficiency.EstimatedInputTokens += EstimateTokens(req)
-	c.score.Efficiency.EstimatedOutputTokens += EstimateTokens(resp)
+	c.overallWire.RoundTrips++
+	c.overallWire.RequestBytes += req
+	c.overallWire.ResponseBytes += resp
+	c.overallWire.TotalWireBytes += req + resp
+	if c.activeJob >= 0 {
+		job := &c.score.AgentJobs[c.activeJob]
+		job.RoundTrips++
+		job.RequestBytes += req
+		job.ResponseBytes += resp
+		job.TotalWireBytes += req + resp
+		job.EstimatedTokens += EstimateTokens(req) + EstimateTokens(resp)
+	}
 	if plaintext {
 		c.score.Reliability.EncryptionViolations++
 		c.score.InvalidReasons = append(c.score.InvalidReasons, "plaintext content observed on contract wire")
@@ -309,9 +364,24 @@ func (c *Collector) Snapshot() Scorecard {
 		}
 	}
 	s.Metrics["successful_operations"] = float64(successful)
-	s.Efficiency.Operations = len(s.Operations)
-	s.Efficiency.SuccessfulActions = successful
-	s.Efficiency.EstimatedTotalTokens = s.Efficiency.EstimatedInputTokens + s.Efficiency.EstimatedOutputTokens
+	s.Metrics["overall_round_trips"] = float64(c.overallWire.RoundTrips)
+	s.Metrics["overall_wire_bytes"] = float64(c.overallWire.TotalWireBytes)
+	s.Efficiency = Efficiency{EfficiencyScore: s.Efficiency.EfficiencyScore, TimeToFirstCollaborationMS: s.Efficiency.TimeToFirstCollaborationMS}
+	for _, job := range s.AgentJobs {
+		s.Efficiency.Operations += job.Operations
+		s.Efficiency.RoundTrips += job.RoundTrips
+		s.Efficiency.RequestBytes += job.RequestBytes
+		s.Efficiency.ResponseBytes += job.ResponseBytes
+		s.Efficiency.TotalWireBytes += job.TotalWireBytes
+		s.Efficiency.EstimatedTotalTokens += job.EstimatedTokens
+		s.Efficiency.Retries += job.Retries
+		s.Efficiency.MaintenanceOperations += job.MaintenanceOperations
+		s.Efficiency.SuccessfulActions += job.Operations - job.FailedOperations
+	}
+	s.Efficiency.AgentInputBytes = s.Efficiency.RequestBytes
+	s.Efficiency.AgentOutputBytes = s.Efficiency.ResponseBytes
+	s.Efficiency.EstimatedInputTokens = EstimateTokens(s.Efficiency.RequestBytes)
+	s.Efficiency.EstimatedOutputTokens = EstimateTokens(s.Efficiency.ResponseBytes)
 	if s.Efficiency.SuccessfulActions > 0 {
 		s.Metrics["bytes_per_successful_action"] = float64(s.Efficiency.TotalWireBytes) / float64(s.Efficiency.SuccessfulActions)
 		s.Metrics["tokens_per_successful_action"] = float64(s.Efficiency.EstimatedTotalTokens) / float64(s.Efficiency.SuccessfulActions)

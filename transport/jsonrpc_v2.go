@@ -152,10 +152,26 @@ func (c *JSONRPCClient) LeaveGroupV2(ctx context.Context, id string) error {
 func (c *JSONRPCClient) RemoveGroupMember(ctx context.Context, group, participant string) error {
 	return c.call(ctx, "RemoveGroupMember", map[string]string{"group_id": group, "participant_id": participant}, nil)
 }
-func (c *JSONRPCClient) ListGroupMembers(ctx context.Context, group string, o contract.ResponseOptions) ([]contract.ServerMember, error) {
-	var v []contract.ServerMember
+func (c *JSONRPCClient) ListGroupMembers(ctx context.Context, group string, o contract.ResponseOptions) ([]contract.GroupMember, error) {
+	var v []contract.GroupMember
 	e := c.call(ctx, "ListGroupMembers", map[string]any{"group_id": group, "response": o}, &v)
 	return v, e
+}
+func (c *JSONRPCClient) ListGroupRequests(ctx context.Context, group string, o contract.ResponseOptions) ([]contract.GroupAccessRequest, error) {
+	var v []contract.GroupAccessRequest
+	e := c.call(ctx, "ListGroupRequests", map[string]any{"group_id": group, "response": o}, &v)
+	return v, e
+}
+func (c *JSONRPCClient) ListGroupInvites(ctx context.Context, group string, o contract.ResponseOptions) ([]contract.GroupInvite, error) {
+	var v []contract.GroupInvite
+	e := c.call(ctx, "ListGroupInvites", map[string]any{"group_id": group, "response": o}, &v)
+	return v, e
+}
+func (c *JSONRPCClient) SetGroupRole(ctx context.Context, group, participant string, role contract.GroupRole) error {
+	return c.call(ctx, "SetGroupRole", map[string]any{"group_id": group, "participant_id": participant, "role": role}, nil)
+}
+func (c *JSONRPCClient) UpdateGroupPermissions(ctx context.Context, group string, p contract.GroupPermissionChange) error {
+	return c.call(ctx, "UpdateGroupPermissions", map[string]any{"group_id": group, "change": p}, nil)
 }
 
 func (c *JSONRPCClient) CreateServerPost(ctx context.Context, spec contract.PostSpec) (contract.PostView, error) {
@@ -236,9 +252,9 @@ func (c *JSONRPCClient) ListPresets(ctx context.Context) ([]contract.Preset, err
 	e := c.call(ctx, "ListPresets", nil, &v)
 	return v, e
 }
-func (c *JSONRPCClient) ApplyPreset(ctx context.Context, name string) (contract.PresetResult, error) {
+func (c *JSONRPCClient) ApplyPreset(ctx context.Context, name string, overrides contract.Manifest) (contract.PresetResult, error) {
 	var v contract.PresetResult
-	e := c.call(ctx, "ApplyPreset", map[string]string{"preset": name}, &v)
+	e := c.call(ctx, "ApplyPreset", map[string]any{"preset": name, "overrides": overrides}, &v)
 	return v, e
 }
 func (c *JSONRPCClient) ListTransports(ctx context.Context) ([]contract.TransportCapability, error) {

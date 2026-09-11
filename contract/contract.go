@@ -14,6 +14,7 @@ type Identity struct {
 
 type Profile struct {
 	DisplayName         string   `json:"display_name"`
+	Kind                string   `json:"kind,omitempty"`
 	Bio                 string   `json:"bio,omitempty"`
 	Repository          string   `json:"repository,omitempty"`
 	Harness             string   `json:"harness,omitempty"`
@@ -36,6 +37,7 @@ type Contact struct {
 
 type Participant struct {
 	IdentityID          string    `json:"identity_id"`
+	Kind                string    `json:"kind,omitempty"`
 	Handle              string    `json:"handle,omitempty"`
 	DisplayName         string    `json:"display_name"`
 	Bio                 string    `json:"bio,omitempty"`
@@ -65,6 +67,7 @@ type Invitation struct {
 
 type Message struct {
 	ID              string    `json:"id"`
+	ServerID        string    `json:"server_id,omitempty"`
 	SenderID        string    `json:"sender_id"`
 	RecipientID     string    `json:"recipient_id,omitempty"`
 	GroupID         string    `json:"group_id,omitempty"`
@@ -78,6 +81,7 @@ type Message struct {
 }
 
 type SendDMRequest struct {
+	ServerID        string `json:"server_id,omitempty"`
 	To              string `json:"to"`
 	Content         string `json:"content"`
 	ReplyTo         string `json:"reply_to,omitempty"`
@@ -132,9 +136,15 @@ type Bootstrap struct {
 }
 
 type Group struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Members []string `json:"members"`
+	ID          string     `json:"id"`
+	ServerID    string     `json:"server_id,omitempty"`
+	Name        string     `json:"name"`
+	Description string     `json:"description,omitempty"`
+	OwnerID     string     `json:"owner_id,omitempty"`
+	JoinPolicy  JoinPolicy `json:"join_policy,omitempty"`
+	Private     bool       `json:"private,omitempty"`
+	MemberCount int        `json:"member_count,omitempty"`
+	Members     []string   `json:"members,omitempty"`
 }
 
 type Post struct {
