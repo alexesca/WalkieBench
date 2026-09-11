@@ -888,6 +888,9 @@ func (h *Harness) declarativeScenario(ctx context.Context) []error {
 	if err != nil {
 		return []error{err}
 	}
+	if err = b.v2.UpdateServerPermissions(ctx, manifestServer.ID, contract.PermissionChange{Role: contract.RoleAgent, Permission: contract.PermissionCreateGroups, Allowed: true}); err != nil {
+		return []error{err}
+	}
 	before, err := b.v2.ListServerMembers(ctx, contract.ServerMemberQuery{ServerID: manifestServer.ID})
 	if err != nil {
 		return []error{err}
