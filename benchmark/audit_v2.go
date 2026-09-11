@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"walkiebench/contract"
+	"walkiebench/telemetry"
 )
 
 var requiredV2Operations = []string{
@@ -68,6 +69,7 @@ func (h *Harness) granularPermissionScenario(ctx context.Context) []error {
 	}
 	expectDenied := func(label string, action func() error) error {
 		if action() == nil {
+			h.t.AddReliability(func(r *telemetry.Reliability) { r.AccessControlViolations++ })
 			return fmt.Errorf("%s succeeded without its granular permission", label)
 		}
 		return nil
@@ -394,6 +396,7 @@ func (h *Harness) securityIsolationScenario(ctx context.Context) []error {
 
 	deny := func(label string, action func() error) error {
 		if action() == nil {
+			h.t.AddReliability(func(r *telemetry.Reliability) { r.AccessControlViolations++ })
 			return fmt.Errorf("%s bypassed authorization", label)
 		}
 		return nil

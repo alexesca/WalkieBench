@@ -917,12 +917,14 @@ func (h *Harness) declarativeScenario(ctx context.Context) []error {
 	}
 	h.t.EndAgentJob(true)
 	if first.Membership != "joined" || second.Membership != "already-member" || first.Server.ID != manifestServer.ID || !containsMemberView(first.Participants, b.identityID()) || !containsGroup(first.Groups, manifestGroup.ID) || !containsContact(first.Contacts, b.identityID()) || !containsString(first.Follows, manifestPost.ID) || first.Cursor == 0 {
+		h.t.FailAgentJob("one-shot-declarative-bootstrap")
 		return []error{fmt.Errorf("manifest did not realize membership, discovery, group, contact, follow, presence, and sync outcomes")}
 	}
 	after, err := v2Call(a, "ListMembersAfterManifest", func() ([]contract.ServerMember, error) {
 		return a.v2.ListServerMembers(ctx, contract.ServerMemberQuery{ServerID: manifestServer.ID})
 	})
 	if err != nil || len(after) != len(before)+1 {
+		h.t.FailAgentJob("one-shot-declarative-bootstrap")
 		if err == nil {
 			err = fmt.Errorf("manifest application duplicated membership")
 		}
@@ -930,6 +932,7 @@ func (h *Harness) declarativeScenario(ctx context.Context) []error {
 	}
 	groupMembers, err := a.v2.ListGroupMembers(ctx, manifestGroup.ID, contract.ResponseOptions{})
 	if err != nil || !containsGroupMember(groupMembers, a.identityID()) {
+		h.t.FailAgentJob("one-shot-declarative-bootstrap")
 		if err == nil {
 			err = fmt.Errorf("manifest did not join an eligible public group")
 		}
@@ -937,6 +940,7 @@ func (h *Harness) declarativeScenario(ctx context.Context) []error {
 	}
 	contactsAfter, err := a.ListContacts(ctx)
 	if err != nil || countContacts(contactsAfter, b.identityID()) != 1 || len(contactsAfter) < len(contactsBefore) {
+		h.t.FailAgentJob("one-shot-declarative-bootstrap")
 		if err == nil {
 			err = fmt.Errorf("manifest contact state was duplicated or lost")
 		}
@@ -944,6 +948,7 @@ func (h *Harness) declarativeScenario(ctx context.Context) []error {
 	}
 	thread, err := a.GetThread(ctx, manifestPost.ID)
 	if err != nil || countStrings(thread.Followers, a.identityID()) != 1 {
+		h.t.FailAgentJob("one-shot-declarative-bootstrap")
 		if err == nil {
 			err = fmt.Errorf("manifest follow state was duplicated")
 		}

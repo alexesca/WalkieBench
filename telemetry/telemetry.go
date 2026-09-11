@@ -161,6 +161,20 @@ func (c *Collector) EndAgentJob(passed bool) {
 	job.ElapsedMS = float64(time.Since(c.jobStarted).Microseconds()) / 1000
 	c.activeJob = -1
 }
+
+// FailAgentJob records a semantic failure discovered by outcome verification
+// after the measured interaction has ended. Verification traffic is kept out
+// of the job's efficiency counters while the job status remains truthful.
+func (c *Collector) FailAgentJob(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := len(c.score.AgentJobs) - 1; i >= 0; i-- {
+		if c.score.AgentJobs[i].Name == name {
+			c.score.AgentJobs[i].Passed = false
+			return
+		}
+	}
+}
 func (c *Collector) SetRunMetadata(profile string, seed int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -184,7 +198,9 @@ func (c *Collector) SetCategory(name string, passed, hardGate bool, score float6
 		if c.score.Categories[i].Name == name {
 			c.score.Categories[i].Passed = c.score.Categories[i].Passed && passed
 			c.score.Categories[i].HardGate = c.score.Categories[i].HardGate || hardGate
-			if score > c.score.Categories[i].Score {
+			if !passed {
+				c.score.Categories[i].Score = 0
+			} else if c.score.Categories[i].Passed && score > c.score.Categories[i].Score {
 				c.score.Categories[i].Score = score
 			}
 			if details != "passed" {

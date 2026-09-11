@@ -76,3 +76,26 @@ func TestAgentEfficiencyExcludesBenchmarkLoadTraffic(t *testing.T) {
 		t.Fatalf("overall wire bytes = %v", s.Metrics["overall_wire_bytes"])
 	}
 }
+
+func TestCategoryFailureCannotRetainPassingScore(t *testing.T) {
+	c := New()
+	c.SetCategory("security", true, true, 100, "passed")
+	c.SetCategory("security", false, true, 0, "failed")
+	c.SetCategory("security", true, true, 100, "passed")
+	s := c.Snapshot()
+	if len(s.Categories) != 1 || s.Categories[0].Passed || s.Categories[0].Score != 0 {
+		t.Fatalf("failed category retained passing state: %+v", s.Categories)
+	}
+}
+
+func TestSemanticOutcomeCanFailCompletedAgentJob(t *testing.T) {
+	c := New()
+	c.BeginAgentJob("manifest")
+	c.Observe("", "ApplyManifest", time.Millisecond, true, nil)
+	c.EndAgentJob(true)
+	c.FailAgentJob("manifest")
+	s := c.Snapshot()
+	if len(s.AgentJobs) != 1 || s.AgentJobs[0].Passed {
+		t.Fatalf("semantic failure was not recorded: %+v", s.AgentJobs)
+	}
+}

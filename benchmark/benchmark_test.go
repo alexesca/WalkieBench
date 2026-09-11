@@ -45,10 +45,10 @@ func TestEfficiencyScoreRequiresHardGates(t *testing.T) {
 
 func TestCollectorAggregatesCategoryFailures(t *testing.T) {
 	c := telemetry.New()
-	c.SetCategory("security", true, true, 0, "passed")
+	c.SetCategory("security", true, true, 100, "passed")
 	c.SetCategory("security", false, true, 0, "failed")
 	s := c.Snapshot()
-	if len(s.Categories) != 1 || s.Categories[0].Passed {
+	if len(s.Categories) != 1 || s.Categories[0].Passed || s.Categories[0].Score != 0 {
 		t.Fatalf("categories = %#v", s.Categories)
 	}
 }
