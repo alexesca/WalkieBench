@@ -2,23 +2,37 @@ package browser
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
 
 type fakeDriver struct {
-	calls []string
-	texts map[string]string
+	calls       []string
+	texts       map[string]string
+	routes      map[string]string
+	currentPath string
 }
 
 func (f *fakeDriver) record(v string)                    { f.calls = append(f.calls, v) }
 func (f *fakeDriver) Open(context.Context, string) error { f.record("open"); return nil }
 func (f *fakeDriver) Snapshot(context.Context) (string, error) {
 	f.record("snapshot")
-	return "snapshot", nil
+	return "navigation main heading snapshot", nil
+}
+func (f *fakeDriver) URL(context.Context) (string, error) {
+	f.record("url")
+	return "http://ui" + f.currentPath, nil
+}
+func (f *fakeDriver) SetViewport(_ context.Context, width, height int) error {
+	f.record(fmt.Sprintf("viewport:%dx%d", width, height))
+	return nil
 }
 func (f *fakeDriver) Click(_ context.Context, selector string) error {
 	f.record("click:" + selector)
+	if path, ok := f.routes[selector]; ok {
+		f.currentPath = path
+	}
 	return nil
 }
 func (f *fakeDriver) Fill(_ context.Context, selector, value string) error {
@@ -50,12 +64,26 @@ func TestRunAdminFlowUsesVisibleAssertionsAndActions(t *testing.T) {
 	f := &fakeDriver{texts: map[string]string{
 		"server": "server-1", "members": "member agent-a", "requests": "request pending", "groups": "group", "moderation": "post", "audit": "audit entry",
 	}}
-	c := Config{URL: "http://ui", Selectors: Selectors{ServerID: "server-input", ServerVisible: "server", MemberVisible: "members", RequestVisible: "requests", ApproveRequest: "approve", RoleParticipant: "role-participant", RoleValue: "role-value", RoleSave: "role-save", GroupAdmin: "groups", Moderation: "moderation", AuditVisible: "audit"}}
+	c := Config{URL: "http://ui", IdentityID: "human", RoleParticipant: "agent-a", Selectors: Selectors{IdentityID: "identity", IdentityLoad: "connect", ServerID: "server-input", ServerVisible: "server", MemberVisible: "members", RequestVisible: "requests", ApproveRequest: "approve", RoleParticipant: "role-participant", RoleValue: "role-value", RoleSave: "role-save", GroupAdmin: "groups", Moderation: "moderation", AuditVisible: "audit"}}
 	if _, err := RunAdminFlow(context.Background(), f, c, "server-1"); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(f.calls, "|")
-	for _, want := range []string{"fill:server-input=server-1", "click:approve", "fill:role-value=moderator", "text:audit"} {
+	for _, want := range []string{"fill:identity=human", "click:connect", "fill:server-input=server-1", "click:approve", "fill:role-participant=agent-a", "fill:role-value=moderator", "text:audit"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("calls omitted %q: %s", want, joined)
+		}
+	}
+}
+
+func TestVerifyApplicationIARequiresLandmarksRoutesAndMobileSnapshot(t *testing.T) {
+	f := &fakeDriver{routes: map[string]string{"inbox": "/inbox", "servers": "/servers", "members": "/members", "groups": "/groups", "forums": "/forums", "admin": "/servers/server-1/settings"}}
+	selectors := Selectors{NavInbox: "inbox", NavServers: "servers", NavMembers: "members", NavGroups: "groups", NavForums: "forums", NavAdmin: "admin"}
+	if err := verifyApplicationIA(context.Background(), f, "http://ui/", selectors); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(f.calls, "|")
+	for _, want := range []string{"click:servers", "url", "viewport:390x844", "snapshot", "viewport:1440x900", "open"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("calls omitted %q: %s", want, joined)
 		}

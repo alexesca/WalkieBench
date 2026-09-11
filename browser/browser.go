@@ -13,6 +13,8 @@ import (
 type Driver interface {
 	Open(context.Context, string) error
 	Snapshot(context.Context) (string, error)
+	URL(context.Context) (string, error)
+	SetViewport(context.Context, int, int) error
 	Click(context.Context, string) error
 	Fill(context.Context, string, string) error
 	Press(context.Context, string, string) error
@@ -35,6 +37,11 @@ func (a AgentBrowser) Open(ctx context.Context, u string) error {
 	return e
 }
 func (a AgentBrowser) Snapshot(ctx context.Context) (string, error) { return a.run(ctx, "snapshot") }
+func (a AgentBrowser) URL(ctx context.Context) (string, error)      { return a.run(ctx, "get", "url") }
+func (a AgentBrowser) SetViewport(ctx context.Context, width, height int) error {
+	_, e := a.run(ctx, "set", "viewport", fmt.Sprint(width), fmt.Sprint(height))
+	return e
+}
 func (a AgentBrowser) Click(ctx context.Context, s string) error {
 	_, e := a.run(ctx, "click", s)
 	return e
@@ -101,12 +108,20 @@ type Selectors struct {
 	GroupAdmin      string `json:"group_admin_visible"`
 	Moderation      string `json:"moderation_visible"`
 	AuditVisible    string `json:"audit_visible"`
+	NavInbox        string `json:"nav_inbox"`
+	NavServers      string `json:"nav_servers"`
+	NavMembers      string `json:"nav_members"`
+	NavGroups       string `json:"nav_groups"`
+	NavForums       string `json:"nav_forums"`
+	NavAdmin        string `json:"nav_admin"`
 }
 type Config struct {
-	URL        string
-	Selectors  Selectors
-	IdentityID string
-	Observer   func(string, time.Duration, error)
+	URL                  string
+	Selectors            Selectors
+	IdentityID           string
+	RoleParticipant      string
+	RequireApplicationIA bool
+	Observer             func(string, time.Duration, error)
 }
 
 type observedDriver struct {
@@ -148,6 +163,59 @@ func (d observedDriver) Snapshot(c context.Context) (string, error) {
 	}
 	return v, e
 }
+func (d observedDriver) URL(c context.Context) (string, error) {
+	start := time.Now()
+	v, e := d.Driver.URL(c)
+	if d.observer != nil {
+		d.observer("URL", time.Since(start), e)
+	}
+	return v, e
+}
+func (d observedDriver) SetViewport(c context.Context, width, height int) error {
+	return d.measure("SetViewport", func() error { return d.Driver.SetViewport(c, width, height) })
+}
+
+func verifyApplicationIA(ctx context.Context, d Driver, baseURL string, selectors Selectors) error {
+	snapshot, err := d.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	lower := strings.ToLower(snapshot)
+	for _, landmark := range []string{"navigation", "main", "heading"} {
+		if !strings.Contains(lower, landmark) {
+			return fmt.Errorf("accessibility snapshot omitted %s landmark or role", landmark)
+		}
+	}
+	routes := []struct {
+		selector string
+		path     string
+	}{{selectors.NavInbox, "/inbox"}, {selectors.NavServers, "/servers"}, {selectors.NavMembers, "/members"}, {selectors.NavGroups, "/groups"}, {selectors.NavForums, "/forums"}, {selectors.NavAdmin, "/settings"}}
+	for _, route := range routes {
+		if route.selector == "" {
+			return fmt.Errorf("browser contract omitted required navigation selector for %s", route.path)
+		}
+		if err = d.Click(ctx, route.selector); err != nil {
+			return err
+		}
+		current, urlErr := d.URL(ctx)
+		if urlErr != nil {
+			return urlErr
+		}
+		if !strings.Contains(current, route.path) {
+			return fmt.Errorf("navigation to %s did not produce a bookmarkable route; got %s", route.path, strings.TrimSpace(current))
+		}
+	}
+	if err = d.SetViewport(ctx, 390, 844); err != nil {
+		return err
+	}
+	if _, err = d.Snapshot(ctx); err != nil {
+		return fmt.Errorf("mobile accessibility snapshot: %w", err)
+	}
+	if err = d.SetViewport(ctx, 1440, 900); err != nil {
+		return err
+	}
+	return d.Open(ctx, baseURL)
+}
 
 // RunHumanFlow performs all human-visible major actions. Selectors use
 // data-testid values by default; a future UI may supply equivalent refs.
@@ -157,6 +225,11 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 		return nil, err
 	}
 	defer d.Close(context.Background())
+	if c.RequireApplicationIA {
+		if err := verifyApplicationIA(ctx, d, c.URL, c.Selectors); err != nil {
+			return nil, err
+		}
+	}
 	if c.Selectors.IdentityID != "" && c.Selectors.IdentityLoad != "" {
 		if err := d.Fill(ctx, c.Selectors.IdentityID, c.IdentityID); err != nil {
 			return nil, err
@@ -264,6 +337,14 @@ func RunAdminFlow(ctx context.Context, d Driver, c Config, serverID string) ([]s
 		return nil, err
 	}
 	defer d.Close(context.Background())
+	if c.Selectors.IdentityID != "" && c.Selectors.IdentityLoad != "" {
+		if err := d.Fill(ctx, c.Selectors.IdentityID, c.IdentityID); err != nil {
+			return nil, err
+		}
+		if err := d.Click(ctx, c.Selectors.IdentityLoad); err != nil {
+			return nil, err
+		}
+	}
 	if c.Selectors.ServerID != "" {
 		if err := d.Fill(ctx, c.Selectors.ServerID, serverID); err != nil {
 			return nil, err
@@ -292,7 +373,7 @@ func RunAdminFlow(ctx context.Context, d Driver, c Config, serverID string) ([]s
 		}
 	}
 	if c.Selectors.RoleParticipant != "" && c.Selectors.RoleValue != "" && c.Selectors.RoleSave != "" {
-		if err := d.Fill(ctx, c.Selectors.RoleParticipant, "agent-b"); err != nil {
+		if err := d.Fill(ctx, c.Selectors.RoleParticipant, c.RoleParticipant); err != nil {
 			return nil, err
 		}
 		if err := d.Fill(ctx, c.Selectors.RoleValue, "moderator"); err != nil {

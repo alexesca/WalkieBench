@@ -102,7 +102,8 @@ Server-scoped group operations are `CreateGroup`, `UpdateGroup`,
 `DeleteGroup`, `DiscoverGroups`, `ListGroups`, `JoinGroup`,
 `RequestGroupAccess`, `ApproveGroupRequest`, `RejectGroupRequest`,
 `InviteToGroup`, `AcceptGroupInvite`, `LeaveGroup`, `RemoveGroupMember`, and
-`ListGroupMembers`. Group policies are `public`, `approval-required`,
+`ListGroupMembers`, `ListGroupRequests`, `ListGroupInvites`, `SetGroupRole`,
+and `UpdateGroupPermissions`. Group policies are `public`, `approval-required`,
 `invite-only`, and `private`/closed. Forum operations are `CreatePost`,
 `EditPost`, `Comment`, `GetThread`, `DiscoverPosts`, `SearchPosts`,
 `SharePost`, `ListNotifications`, and `MarkNotificationsRead`. They cover
@@ -145,6 +146,10 @@ required resumes, accepted unauthorized access, invalid membership transitions,
 cross-Server or cross-group leakage, duplicate idempotent state, plaintext
 content on a protected contract wire, and failed required browser assertions.
 A failed hard gate invalidates the run regardless of speed.
+Category scores are all-or-nothing gates: a category with any failed required
+scenario has score zero even when another scenario in that category passed.
+Agent-job status includes semantic state verification performed after the
+measured network interaction; audit reads do not inflate its efficiency data.
 
 Agent Efficiency records operations, round trips, request/response/total wire
 bytes, agent-visible bytes, deterministic token estimates, retries,
@@ -191,7 +196,10 @@ clock and operation counts.
 ## Browser contract
 
 The UI driver uses `agent-browser` commands: `open`, `fill`, `click`, `get text`,
-and `snapshot`. By default it addresses accessible controls with these
+`get url`, `set viewport`, and `snapshot`. It requires an accessibility tree
+with navigation, main, and heading semantics; bookmarkable Inbox, Servers,
+Members, Groups, Forums, and Settings routes; and successful desktop and mobile
+accessibility snapshots. By default it addresses visible controls with these
 `data-testid` selectors:
 
 `identity-id`, `identity-load`, `dm-recipient`, `dm-content`, `dm-send`,
@@ -204,14 +212,22 @@ thread, notification, and ordering assertions. The `*-messages`, `posts`, and
 `comments` selectors point to visible content containers, so assertions do not
 rely on input values.
 
+The default routed-navigation selectors are `nav-inbox`, `nav-servers`,
+`nav-members`, `nav-groups`, `nav-forums`, and `nav-admin`. They must navigate
+to paths containing `/inbox`, `/servers`, `/members`, `/groups`, `/forums`, and
+`/settings`, respectively. A selector override file may map these stable
+benchmark roles onto equivalent implementation controls.
+
 Pass `--browser-selectors selectors.json` to override them. The JSON file uses
 the selector field names in `browser.Selectors`. The browser flow loads the
 benchmark human identity, writes a DM and group message, creates a post,
 writes a comment, follows, reacts, checks visible text and presence, captures a
 snapshot, then uses an agent client to verify the same content is readable.
-When V2 administration selectors are configured it also visibly checks Server,
-member, request, group, moderation, and audit surfaces and exercises approval
-and role controls. The additional selector names are `server-id`,
+The benchmark creates an approval-required Server owned by the browser human,
+submits a real agent request, then verifies through the visible UI and API
+read-back that the human approved it and assigned the moderator role. It also
+visibly checks Server, member, request, group, moderation, and audit surfaces.
+The additional selector names are `server-id`,
 `server-visible`, `server-members-visible`, `server-requests-visible`,
 `server-approve-request`, `server-role-participant`, `server-role-value`,
 `server-role-save`, `group-admin-visible`, `moderation-visible`, and

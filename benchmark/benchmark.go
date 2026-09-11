@@ -961,14 +961,40 @@ func (h *Harness) presenceScenario(ctx context.Context) []error {
 
 func (h *Harness) browserScenario(ctx context.Context) []error {
 	a, hu := h.sessions["agent-a"], h.sessions["human"]
+	humanV2, err := h.v2("human")
+	if err != nil {
+		return []error{err}
+	}
+	adminServer, err := humanV2.v2.CreateServer(ctx, h.serverSpec(h.label("browser-admin"), contract.JoinApproval))
+	if err != nil {
+		return []error{err}
+	}
+	request, err := a.v2.RequestServerAccess(ctx, adminServer.ID, "browser approval workflow")
+	if err != nil {
+		return []error{err}
+	}
 	if e := hu.Close(); e != nil {
 		return []error{e}
 	}
-	if _, e := browser.RunHumanFlow(ctx, h.browser, browser.Config{URL: h.cfg.BrowserURL, Selectors: h.cfg.BrowserSelectors, IdentityID: hu.identityID(), Observer: func(name string, d time.Duration, e error) { h.t.Observe("", "Browser."+name, d, e == nil, e) }}, h.groupID, h.postID, a.identityID()); e != nil {
+	if _, e := browser.RunHumanFlow(ctx, h.browser, browser.Config{URL: h.cfg.BrowserURL, Selectors: h.cfg.BrowserSelectors, IdentityID: hu.identityID(), RequireApplicationIA: true, Observer: func(name string, d time.Duration, e error) { h.t.Observe("", "Browser."+name, d, e == nil, e) }}, h.groupID, h.postID, a.identityID()); e != nil {
 		return []error{e}
 	}
-	if h.serverID != "" && h.cfg.BrowserSelectors.ServerVisible != "" {
-		if _, e := browser.RunAdminFlow(ctx, h.browser, browser.Config{URL: h.cfg.BrowserURL, Selectors: h.cfg.BrowserSelectors, IdentityID: hu.identityID(), Observer: func(name string, d time.Duration, e error) { h.t.Observe("", "BrowserAdmin."+name, d, e == nil, e) }}, h.serverID); e != nil {
+	if h.cfg.BrowserSelectors.ServerVisible != "" {
+		if _, e := browser.RunAdminFlow(ctx, h.browser, browser.Config{URL: h.cfg.BrowserURL, Selectors: h.cfg.BrowserSelectors, IdentityID: hu.identityID(), RoleParticipant: a.identityID(), Observer: func(name string, d time.Duration, e error) { h.t.Observe("", "BrowserAdmin."+name, d, e == nil, e) }}, adminServer.ID); e != nil {
+			return []error{e}
+		}
+		member, e := humanV2.v2.GetServerMember(ctx, adminServer.ID, a.identityID(), contract.ResponseOptions{})
+		if e != nil || member.Role != contract.RoleModerator {
+			if e == nil {
+				e = fmt.Errorf("browser administration did not approve the request and assign moderator role")
+			}
+			return []error{e}
+		}
+		requests, e := humanV2.v2.ListServerRequests(ctx, adminServer.ID, contract.ResponseOptions{})
+		if e != nil || !containsApprovedRequest(requests, request.ID) {
+			if e == nil {
+				e = fmt.Errorf("browser approval did not persist request lifecycle")
+			}
 			return []error{e}
 		}
 	}
@@ -1030,6 +1056,14 @@ func messageIDs(ms []contract.Message, s string) []string {
 func hasContact(cs []contract.Contact, id string) bool {
 	for _, c := range cs {
 		if c.IdentityID == id {
+			return true
+		}
+	}
+	return false
+}
+func containsApprovedRequest(requests []contract.ServerAccessRequest, id string) bool {
+	for _, request := range requests {
+		if request.ID == id && request.Status == "approved" {
 			return true
 		}
 	}
