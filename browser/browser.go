@@ -253,6 +253,11 @@ func verifyApplicationIA(ctx context.Context, d Driver, baseURL string, selector
 // data-testid values by default; a future UI may supply equivalent refs.
 func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agentID string) ([]string, error) {
 	d = observedDriver{Driver: d, observer: c.Observer}
+	// Start from a deterministic desktop layout. agent-browser persists its last
+	// viewport across invocations, including a prior manual mobile review.
+	if err := d.SetViewport(ctx, 1440, 900); err != nil {
+		return nil, err
+	}
 	if err := d.Open(ctx, c.URL); err != nil {
 		return nil, err
 	}
@@ -473,6 +478,9 @@ func waitIdentityReady(ctx context.Context, d Driver, selectors Selectors) (bool
 // target an implementation that exposes a read-only subset of administration.
 func RunAdminFlow(ctx context.Context, d Driver, c Config, serverID string) ([]string, error) {
 	d = observedDriver{Driver: d, observer: c.Observer}
+	if err := d.SetViewport(ctx, 1440, 900); err != nil {
+		return nil, err
+	}
 	if err := d.Open(ctx, c.URL); err != nil {
 		return nil, err
 	}

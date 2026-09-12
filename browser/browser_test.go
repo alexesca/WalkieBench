@@ -32,6 +32,9 @@ func TestRunHumanFlowNavigatesRoutedApplicationBeforeAssertions(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(f.calls, "|")
+	if len(f.calls) < 2 || f.calls[0] != "viewport:1440x900" || f.calls[1] != "open:http://ui/" {
+		t.Fatalf("human flow did not establish a desktop viewport before navigation: %v", f.calls)
+	}
 	for _, want := range []string{"open:http://ui/servers/server-1/overview", "click:nav-groups", "open:http://ui/dm/agent-1", "open:http://ui/groups/group-1", "click:nav-forums", "open:http://ui/posts/post-1", "open:http://ui/notifications"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("calls omitted routed step %q: %s", want, joined)
