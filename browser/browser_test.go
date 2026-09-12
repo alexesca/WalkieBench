@@ -92,12 +92,12 @@ func TestRunAdminFlowUsesVisibleAssertionsAndActions(t *testing.T) {
 	f := &fakeDriver{texts: map[string]string{
 		"server": "server-1", "members": "member agent-a", "requests": "request pending", "groups": "group", "moderation": "post", "audit": "audit entry",
 	}}
-	c := Config{URL: "http://ui", IdentityID: "human", RoleParticipant: "agent-a", Selectors: Selectors{IdentityID: "identity", IdentityLoad: "connect", ServerID: "server-input", ServerVisible: "server", MemberVisible: "members", RequestVisible: "requests", ApproveRequest: "approve", RoleParticipant: "role-participant", RoleValue: "role-value", RoleSave: "role-save", RoleResult: "role-result", GroupAdmin: "groups", Moderation: "moderation", AuditVisible: "audit"}}
+	c := Config{URL: "http://ui", IdentityID: "human", IdentityToken: "secret", RoleParticipant: "agent-a", Selectors: Selectors{IdentityID: "identity", IdentityToken: "identity-token", IdentityLoad: "connect", ServerID: "server-input", ServerVisible: "server", MemberVisible: "members", RequestVisible: "requests", ApproveRequest: "approve", RoleParticipant: "role-participant", RoleValue: "role-value", RoleSave: "role-save", RoleResult: "role-result", GroupAdmin: "groups", Moderation: "moderation", AuditVisible: "audit"}}
 	if _, err := RunAdminFlow(context.Background(), f, c, "server-1"); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(f.calls, "|")
-	for _, want := range []string{"fill:identity=human", "click:connect", "fill:server-input=server-1", "click:approve", "select:role-participant=agent-a", "select:role-value=moderator", "text:audit"} {
+	for _, want := range []string{"fill:identity=human", "fill:identity-token=secret", "click:connect", "fill:server-input=server-1", "click:approve", "select:role-participant=agent-a", "select:role-value=moderator", "text:audit"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("calls omitted %q: %s", want, joined)
 		}

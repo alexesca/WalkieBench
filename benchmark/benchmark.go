@@ -815,6 +815,15 @@ func (h *Harness) loadScenario(ctx context.Context) []error {
 
 func (h *Harness) unauthorizedScenario(ctx context.Context) []error {
 	a, b, c := h.sessions["agent-a"], h.sessions["agent-b"], h.sessions["agent-c"]
+	unauthenticated, e := h.factory.New(ctx, nil)
+	if e != nil {
+		return []error{e}
+	}
+	defer unauthenticated.Close()
+	if _, e = unauthenticated.CreateOrLoadIdentity(ctx, h.identities["agent-a"].ID); e == nil {
+		h.t.AddReliability(func(x *telemetry.Reliability) { x.AccessControlViolations++ })
+		return []error{fmt.Errorf("existing identity could be loaded without its session credential")}
+	}
 	g, e := a.CreateGroup(ctx, "acl-gate")
 	if e != nil {
 		return []error{e}
@@ -982,11 +991,11 @@ func (h *Harness) browserScenario(ctx context.Context) []error {
 	if e := hu.Close(); e != nil {
 		return []error{e}
 	}
-	if _, e := browser.RunHumanFlow(ctx, h.browser, browser.Config{URL: h.cfg.BrowserURL, Selectors: h.cfg.BrowserSelectors, IdentityID: hu.identityID(), ServerID: h.serverID, RequireApplicationIA: true, Observer: func(name string, d time.Duration, e error) { h.t.Observe("", "Browser."+name, d, e == nil, e) }}, h.groupID, h.postID, a.identityID()); e != nil {
+	if _, e := browser.RunHumanFlow(ctx, h.browser, browser.Config{URL: h.cfg.BrowserURL, Selectors: h.cfg.BrowserSelectors, IdentityID: hu.identityID(), IdentityToken: hu.identity.SessionToken, ServerID: h.serverID, RequireApplicationIA: true, Observer: func(name string, d time.Duration, e error) { h.t.Observe("", "Browser."+name, d, e == nil, e) }}, h.groupID, h.postID, a.identityID()); e != nil {
 		return []error{e}
 	}
 	if h.cfg.BrowserSelectors.ServerVisible != "" {
-		if _, e := browser.RunAdminFlow(ctx, h.browser, browser.Config{URL: h.cfg.BrowserURL, Selectors: h.cfg.BrowserSelectors, IdentityID: hu.identityID(), RoleParticipant: a.identityID(), Observer: func(name string, d time.Duration, e error) { h.t.Observe("", "BrowserAdmin."+name, d, e == nil, e) }}, adminServer.ID); e != nil {
+		if _, e := browser.RunAdminFlow(ctx, h.browser, browser.Config{URL: h.cfg.BrowserURL, Selectors: h.cfg.BrowserSelectors, IdentityID: hu.identityID(), IdentityToken: hu.identity.SessionToken, RoleParticipant: a.identityID(), Observer: func(name string, d time.Duration, e error) { h.t.Observe("", "BrowserAdmin."+name, d, e == nil, e) }}, adminServer.ID); e != nil {
 			return []error{e}
 		}
 		member, e := humanV2.v2.GetServerMember(ctx, adminServer.ID, a.identityID(), contract.ResponseOptions{})

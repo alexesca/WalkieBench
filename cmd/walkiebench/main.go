@@ -91,7 +91,7 @@ func main() {
 
 func defaultSelectors() browser.Selectors {
 	return browser.Selectors{
-		IdentityID: `[data-testid="identity-id"]`, IdentityLoad: `[data-testid="identity-load"]`, IdentityVisible: `[data-testid="identity-status"]`,
+		IdentityID: `[data-testid="identity-id"]`, IdentityToken: `[data-testid="identity-token"]`, IdentityLoad: `[data-testid="identity-load"]`, IdentityVisible: `[data-testid="identity-status"]`,
 		DMRecipient: `[data-testid="dm-recipient"]`, DMContent: `[data-testid="dm-content"]`, DMSend: `[data-testid="dm-send"]`, DMVisible: `[data-testid="dm-messages"]`,
 		GroupName: `[data-testid="group-name"]`, GroupCreate: `[data-testid="group-create"]`, GroupID: `[data-testid="group-id"]`, GroupMessage: `[data-testid="group-message"]`, GroupSend: `[data-testid="group-send"]`, GroupVisible: `[data-testid="group-messages"]`,
 		PostTitle: `[data-testid="post-title"]`, PostContent: `[data-testid="post-content"]`, PostCreate: `[data-testid="post-create"]`, PostVisible: `[data-testid="posts"]`,

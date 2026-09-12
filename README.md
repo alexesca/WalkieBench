@@ -202,7 +202,7 @@ Members, Groups, Forums, and Settings routes; and successful desktop and mobile
 accessibility snapshots. By default it addresses visible controls with these
 `data-testid` selectors:
 
-`identity-id`, `identity-load`, `dm-recipient`, `dm-content`, `dm-send`,
+`identity-id`, `identity-token`, `identity-load`, `dm-recipient`, `dm-content`, `dm-send`,
 `dm-messages`, `group-id`, `group-message`, `group-send`, `group-messages`,
 `post-title`, `post-content`, `post-create`, `posts`, `thread-id`,
 `comment-content`, `comment-send`, `comments`, `thread-follow`, `react`, and

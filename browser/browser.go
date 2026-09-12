@@ -95,6 +95,7 @@ func (a AgentBrowser) Close(ctx context.Context) error { _, e := a.run(ctx, "clo
 
 type Selectors struct {
 	IdentityID      string `json:"identity_id"`
+	IdentityToken   string `json:"identity_token"`
 	IdentityLoad    string `json:"identity_load"`
 	IdentityVisible string `json:"identity_visible"`
 	DMRecipient     string `json:"dm_recipient"`
@@ -145,6 +146,7 @@ type Config struct {
 	URL                  string
 	Selectors            Selectors
 	IdentityID           string
+	IdentityToken        string
 	ServerID             string
 	RoleParticipant      string
 	RequireApplicationIA bool
@@ -268,6 +270,11 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 		if !connected {
 			if err := d.Fill(ctx, c.Selectors.IdentityID, c.IdentityID); err != nil {
 				return nil, err
+			}
+			if c.Selectors.IdentityToken != "" && c.IdentityToken != "" {
+				if err := d.Fill(ctx, c.Selectors.IdentityToken, c.IdentityToken); err != nil {
+					return nil, err
+				}
 			}
 			if err := d.Click(ctx, c.Selectors.IdentityLoad); err != nil {
 				return nil, err
@@ -478,6 +485,11 @@ func RunAdminFlow(ctx context.Context, d Driver, c Config, serverID string) ([]s
 		if !connected {
 			if err := d.Fill(ctx, c.Selectors.IdentityID, c.IdentityID); err != nil {
 				return nil, err
+			}
+			if c.Selectors.IdentityToken != "" && c.IdentityToken != "" {
+				if err := d.Fill(ctx, c.Selectors.IdentityToken, c.IdentityToken); err != nil {
+					return nil, err
+				}
 			}
 			if err := d.Click(ctx, c.Selectors.IdentityLoad); err != nil {
 				return nil, err
