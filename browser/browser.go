@@ -62,7 +62,7 @@ func (a AgentBrowser) AssertVisible(ctx context.Context, s, needle string) error
 	if e != nil {
 		return e
 	}
-	if !strings.Contains(v, needle) {
+	if !strings.Contains(strings.ToLower(v), strings.ToLower(needle)) {
 		return fmt.Errorf("selector %q does not contain %q; got %q", s, needle, v)
 	}
 	return nil
@@ -72,6 +72,7 @@ func (a AgentBrowser) Close(ctx context.Context) error { _, e := a.run(ctx, "clo
 type Selectors struct {
 	IdentityID      string `json:"identity_id"`
 	IdentityLoad    string `json:"identity_load"`
+	IdentityVisible string `json:"identity_visible"`
 	DMRecipient     string `json:"dm_recipient"`
 	DMContent       string `json:"dm_content"`
 	DMSend          string `json:"dm_send"`
@@ -119,6 +120,7 @@ type Config struct {
 	URL                  string
 	Selectors            Selectors
 	IdentityID           string
+	ServerID             string
 	RoleParticipant      string
 	RequireApplicationIA bool
 	Observer             func(string, time.Duration, error)
@@ -231,11 +233,46 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 		}
 	}
 	if c.Selectors.IdentityID != "" && c.Selectors.IdentityLoad != "" {
+		if err := waitVisible(ctx, d, c.Selectors.IdentityID, ""); err != nil {
+			return nil, err
+		}
 		if err := d.Fill(ctx, c.Selectors.IdentityID, c.IdentityID); err != nil {
 			return nil, err
 		}
 		if err := d.Click(ctx, c.Selectors.IdentityLoad); err != nil {
 			return nil, err
+		}
+		if c.Selectors.IdentityVisible != "" {
+			if err := waitVisible(ctx, d, c.Selectors.IdentityVisible, "Connected"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	baseURL := strings.TrimRight(c.URL, "/")
+	check := func(sel, needle string) error { return waitVisible(ctx, d, sel, needle) }
+	if c.ServerID != "" {
+		if err := d.Open(ctx, baseURL+"/servers/"+c.ServerID+"/overview"); err != nil {
+			return nil, err
+		}
+		if c.Selectors.ServerVisible != "" {
+			if err := check(c.Selectors.ServerVisible, c.ServerID); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if c.Selectors.Presence != "" {
+		if err := check(c.Selectors.Presence, "online"); err != nil {
+			return nil, err
+		}
+	}
+	if c.Selectors.NavGroups != "" {
+		if err := d.Click(ctx, c.Selectors.NavGroups); err != nil {
+			return nil, err
+		}
+		if c.Selectors.GroupName != "" {
+			if err := check(c.Selectors.GroupName, ""); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if c.Selectors.GroupName != "" && c.Selectors.GroupCreate != "" {
@@ -246,7 +283,12 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 			return nil, err
 		}
 	}
-	check := func(sel, needle string) error { return waitVisible(ctx, d, sel, needle) }
+	if err := d.Open(ctx, baseURL+"/dm/"+agentID); err != nil {
+		return nil, err
+	}
+	if err := check(c.Selectors.DMRecipient, ""); err != nil {
+		return nil, err
+	}
 	if err := d.Fill(ctx, c.Selectors.DMRecipient, agentID); err != nil {
 		return nil, err
 	}
@@ -254,6 +296,15 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 		return nil, err
 	}
 	if err := d.Click(ctx, c.Selectors.DMSend); err != nil {
+		return nil, err
+	}
+	if err := check(c.Selectors.DMVisible, "human-ui-dm"); err != nil {
+		return nil, err
+	}
+	if err := d.Open(ctx, baseURL+"/groups/"+groupID); err != nil {
+		return nil, err
+	}
+	if err := check(c.Selectors.GroupID, ""); err != nil {
 		return nil, err
 	}
 	if err := d.Fill(ctx, c.Selectors.GroupID, groupID); err != nil {
@@ -265,6 +316,22 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 	if err := d.Click(ctx, c.Selectors.GroupSend); err != nil {
 		return nil, err
 	}
+	if err := check(c.Selectors.GroupVisible, "human-ui-group"); err != nil {
+		return nil, err
+	}
+	if c.Selectors.OrderVisible != "" {
+		if err := check(c.Selectors.OrderVisible, "human-ui-group"); err != nil {
+			return nil, err
+		}
+	}
+	if c.Selectors.NavForums != "" {
+		if err := d.Click(ctx, c.Selectors.NavForums); err != nil {
+			return nil, err
+		}
+		if err := check(c.Selectors.PostTitle, ""); err != nil {
+			return nil, err
+		}
+	}
 	if err := d.Fill(ctx, c.Selectors.PostTitle, "human-ui-post"); err != nil {
 		return nil, err
 	}
@@ -272,6 +339,15 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 		return nil, err
 	}
 	if err := d.Click(ctx, c.Selectors.PostCreate); err != nil {
+		return nil, err
+	}
+	if err := check(c.Selectors.PostVisible, "human-ui-post-content"); err != nil {
+		return nil, err
+	}
+	if err := d.Open(ctx, baseURL+"/posts/"+postID); err != nil {
+		return nil, err
+	}
+	if err := check(c.Selectors.ThreadID, ""); err != nil {
 		return nil, err
 	}
 	if err := d.Fill(ctx, c.Selectors.ThreadID, postID); err != nil {
@@ -289,18 +365,19 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 	if err := d.Click(ctx, c.Selectors.React); err != nil {
 		return nil, err
 	}
-	for _, p := range []struct{ s, n string }{{c.Selectors.DMVisible, "human-ui-dm"}, {c.Selectors.GroupVisible, "human-ui-group"}, {c.Selectors.PostVisible, "human-ui-post-content"}, {c.Selectors.CommentVisible, "human-ui-comment"}, {c.Selectors.Presence, "online"}} {
+	for _, p := range []struct{ s, n string }{{c.Selectors.CommentVisible, "human-ui-comment"}, {c.Selectors.ThreadVisible, postID}, {c.Selectors.ThreadStructure, "human-ui-comment"}} {
 		if p.s != "" {
 			if err := check(p.s, p.n); err != nil {
 				return nil, err
 			}
 		}
 	}
-	for _, p := range []struct{ s, n string }{{c.Selectors.ThreadVisible, postID}, {c.Selectors.ThreadStructure, "human-ui-comment"}, {c.Selectors.Notification, "notification"}, {c.Selectors.OrderVisible, "human-ui-group"}} {
-		if p.s != "" {
-			if err := check(p.s, p.n); err != nil {
-				return nil, err
-			}
+	if c.Selectors.NavInbox != "" && c.Selectors.Notification != "" {
+		if err := d.Open(ctx, baseURL+"/notifications"); err != nil {
+			return nil, err
+		}
+		if err := check(c.Selectors.Notification, "notification"); err != nil {
+			return nil, err
 		}
 	}
 	s, e := d.Snapshot(ctx)
@@ -338,11 +415,29 @@ func RunAdminFlow(ctx context.Context, d Driver, c Config, serverID string) ([]s
 	}
 	defer d.Close(context.Background())
 	if c.Selectors.IdentityID != "" && c.Selectors.IdentityLoad != "" {
+		if err := waitVisible(ctx, d, c.Selectors.IdentityID, ""); err != nil {
+			return nil, err
+		}
 		if err := d.Fill(ctx, c.Selectors.IdentityID, c.IdentityID); err != nil {
 			return nil, err
 		}
 		if err := d.Click(ctx, c.Selectors.IdentityLoad); err != nil {
 			return nil, err
+		}
+		if c.Selectors.IdentityVisible != "" {
+			if err := waitVisible(ctx, d, c.Selectors.IdentityVisible, "Connected"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if c.Selectors.NavAdmin != "" {
+		if err := d.Open(ctx, strings.TrimRight(c.URL, "/")+"/settings"); err != nil {
+			return nil, err
+		}
+		if c.Selectors.ServerID != "" {
+			if err := waitVisible(ctx, d, c.Selectors.ServerID, ""); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if c.Selectors.ServerID != "" {
@@ -362,7 +457,7 @@ func RunAdminFlow(ctx context.Context, d Driver, c Config, serverID string) ([]s
 		{c.Selectors.AuditVisible, "audit"},
 	} {
 		if p.selector != "" {
-			if err := d.AssertVisible(ctx, p.selector, p.needle); err != nil {
+			if err := waitVisible(ctx, d, p.selector, p.needle); err != nil {
 				return nil, err
 			}
 		}

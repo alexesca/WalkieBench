@@ -14,11 +14,29 @@ type fakeDriver struct {
 	currentPath string
 }
 
-func (f *fakeDriver) record(v string)                    { f.calls = append(f.calls, v) }
-func (f *fakeDriver) Open(context.Context, string) error { f.record("open"); return nil }
+func (f *fakeDriver) record(v string)                          { f.calls = append(f.calls, v) }
+func (f *fakeDriver) Open(_ context.Context, url string) error { f.record("open:" + url); return nil }
 func (f *fakeDriver) Snapshot(context.Context) (string, error) {
 	f.record("snapshot")
 	return "navigation main heading snapshot", nil
+}
+
+func TestRunHumanFlowNavigatesRoutedApplicationBeforeAssertions(t *testing.T) {
+	f := &fakeDriver{texts: map[string]string{
+		"server": "server-1", "presence": "3 online", "dm-visible": "human-ui-dm", "group-visible": "human-ui-group", "ordered": "human-ui-group",
+		"post-visible": "human-ui-post-content", "comments": "human-ui-comment", "thread": "post-1 human-ui-comment", "notifications": "new notification",
+	}}
+	f.texts["identity-status"] = "Connected"
+	s := Selectors{IdentityID: "identity", IdentityLoad: "connect", IdentityVisible: "identity-status", ServerVisible: "server", Presence: "presence", NavGroups: "nav-groups", GroupName: "group-name", GroupCreate: "group-create", DMRecipient: "dm-recipient", DMContent: "dm-content", DMSend: "dm-send", DMVisible: "dm-visible", GroupID: "group-id", GroupMessage: "group-message", GroupSend: "group-send", GroupVisible: "group-visible", OrderVisible: "ordered", NavForums: "nav-forums", PostTitle: "post-title", PostContent: "post-content", PostCreate: "post-create", PostVisible: "post-visible", ThreadID: "thread-id", CommentContent: "comment", CommentSend: "comment-send", Follow: "follow", React: "react", CommentVisible: "comments", ThreadVisible: "thread", ThreadStructure: "thread", NavInbox: "nav-inbox", Notification: "notifications"}
+	if _, err := RunHumanFlow(context.Background(), f, Config{URL: "http://ui/", IdentityID: "human", ServerID: "server-1", Selectors: s}, "group-1", "post-1", "agent-1"); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(f.calls, "|")
+	for _, want := range []string{"open:http://ui/servers/server-1/overview", "click:nav-groups", "open:http://ui/dm/agent-1", "open:http://ui/groups/group-1", "click:nav-forums", "open:http://ui/posts/post-1", "open:http://ui/notifications"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("calls omitted routed step %q: %s", want, joined)
+		}
+	}
 }
 func (f *fakeDriver) URL(context.Context) (string, error) {
 	f.record("url")

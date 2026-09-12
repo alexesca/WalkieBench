@@ -965,6 +965,12 @@ func (h *Harness) browserScenario(ctx context.Context) []error {
 	if err != nil {
 		return []error{err}
 	}
+	// The visible human flow creates groups and posts in the main fixture.
+	// Grant that authority explicitly so the UI must prove real authorized
+	// mutations rather than passing by echoing form input optimistically.
+	if err = a.v2.SetServerRole(ctx, h.serverID, hu.identityID(), contract.RoleAdmin); err != nil {
+		return []error{err}
+	}
 	adminServer, err := humanV2.v2.CreateServer(ctx, h.serverSpec(h.label("browser-admin"), contract.JoinApproval))
 	if err != nil {
 		return []error{err}
@@ -976,7 +982,7 @@ func (h *Harness) browserScenario(ctx context.Context) []error {
 	if e := hu.Close(); e != nil {
 		return []error{e}
 	}
-	if _, e := browser.RunHumanFlow(ctx, h.browser, browser.Config{URL: h.cfg.BrowserURL, Selectors: h.cfg.BrowserSelectors, IdentityID: hu.identityID(), RequireApplicationIA: true, Observer: func(name string, d time.Duration, e error) { h.t.Observe("", "Browser."+name, d, e == nil, e) }}, h.groupID, h.postID, a.identityID()); e != nil {
+	if _, e := browser.RunHumanFlow(ctx, h.browser, browser.Config{URL: h.cfg.BrowserURL, Selectors: h.cfg.BrowserSelectors, IdentityID: hu.identityID(), ServerID: h.serverID, RequireApplicationIA: true, Observer: func(name string, d time.Duration, e error) { h.t.Observe("", "Browser."+name, d, e == nil, e) }}, h.groupID, h.postID, a.identityID()); e != nil {
 		return []error{e}
 	}
 	if h.cfg.BrowserSelectors.ServerVisible != "" {

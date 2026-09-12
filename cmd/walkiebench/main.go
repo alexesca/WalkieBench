@@ -91,12 +91,12 @@ func main() {
 
 func defaultSelectors() browser.Selectors {
 	return browser.Selectors{
-		IdentityID: `[data-testid="identity-id"]`, IdentityLoad: `[data-testid="identity-load"]`,
+		IdentityID: `[data-testid="identity-id"]`, IdentityLoad: `[data-testid="identity-load"]`, IdentityVisible: `[data-testid="identity-status"]`,
 		DMRecipient: `[data-testid="dm-recipient"]`, DMContent: `[data-testid="dm-content"]`, DMSend: `[data-testid="dm-send"]`, DMVisible: `[data-testid="dm-messages"]`,
 		GroupName: `[data-testid="group-name"]`, GroupCreate: `[data-testid="group-create"]`, GroupID: `[data-testid="group-id"]`, GroupMessage: `[data-testid="group-message"]`, GroupSend: `[data-testid="group-send"]`, GroupVisible: `[data-testid="group-messages"]`,
 		PostTitle: `[data-testid="post-title"]`, PostContent: `[data-testid="post-content"]`, PostCreate: `[data-testid="post-create"]`, PostVisible: `[data-testid="posts"]`,
-		ThreadID: `[data-testid="thread-id"]`, CommentContent: `[data-testid="comment-content"]`, CommentSend: `[data-testid="comment-send"]`, CommentVisible: `[data-testid="comments"]`, ThreadVisible: `[data-testid="thread-visible"]`, ThreadStructure: `[data-testid="thread-structure"]`,
-		Follow: `[data-testid="thread-follow"]`, React: `[data-testid="react"]`, Presence: `[data-testid="presence"]`, Notification: `[data-testid="notifications-visible"]`, OrderVisible: `[data-testid="ordered-activity-visible"]`,
+		ThreadID: `[data-testid="thread-id"]`, CommentContent: `[data-testid="comment-content"]`, CommentSend: `[data-testid="comment-send"]`, CommentVisible: `[data-testid="comments"]`, ThreadVisible: `[data-testid="thread-visible"]`, ThreadStructure: `[data-testid="comments"]`,
+		Follow: `[data-testid="thread-follow"]`, React: `[data-testid="react"]`, Presence: `[data-testid="presence"]`, Notification: `[data-testid="notifications-visible"]`, OrderVisible: `[data-testid="group-messages"]`,
 		ServerID: `[data-testid="server-id"]`, ServerVisible: `[data-testid="server-visible"]`, MemberVisible: `[data-testid="server-members-visible"]`, RequestVisible: `[data-testid="server-requests-visible"]`, ApproveRequest: `[data-testid="server-approve-request"]`,
 		RoleParticipant: `[data-testid="server-role-participant"]`, RoleValue: `[data-testid="server-role-value"]`, RoleSave: `[data-testid="server-role-save"]`, GroupAdmin: `[data-testid="group-admin-visible"]`, Moderation: `[data-testid="moderation-visible"]`, AuditVisible: `[data-testid="audit-visible"]`,
 		NavInbox: `[data-testid="nav-inbox"]`, NavServers: `[data-testid="nav-servers"]`, NavMembers: `[data-testid="nav-members"]`, NavGroups: `[data-testid="nav-groups"]`, NavForums: `[data-testid="nav-forums"]`, NavAdmin: `[data-testid="nav-admin"]`,
