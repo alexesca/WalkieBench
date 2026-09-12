@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,6 +35,22 @@ func TestSecureWireRoundTrip(t *testing.T) {
 	}
 	if got["content"] != input["content"] || got["nested"].(map[string]any)["title"] != "nested-title" {
 		t.Fatalf("round trip = %#v", got)
+	}
+}
+
+func TestSecureWirePreservesUint64(t *testing.T) {
+	sealed, err := protectJSON(map[string]any{"after_cursor": uint64(math.MaxUint64)}, "session-secret", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		AfterCursor uint64 `json:"after_cursor"`
+	}
+	if err = json.Unmarshal(sealed, &got); err != nil {
+		t.Fatalf("decode protected payload: %v (%s)", err, sealed)
+	}
+	if got.AfterCursor != math.MaxUint64 {
+		t.Fatalf("after_cursor = %d, want %d", got.AfterCursor, uint64(math.MaxUint64))
 	}
 }
 
