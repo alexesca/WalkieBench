@@ -48,6 +48,12 @@ func (f *fakeDriver) SetViewport(_ context.Context, width, height int) error {
 }
 func (f *fakeDriver) Click(_ context.Context, selector string) error {
 	f.record("click:" + selector)
+	if selector == "approve" {
+		f.texts["requests"] = "No pending request"
+	}
+	if selector == "role-save" {
+		f.texts["role-result"] = "Role updated to moderator"
+	}
 	if path, ok := f.routes[selector]; ok {
 		f.currentPath = path
 	}
@@ -55,6 +61,10 @@ func (f *fakeDriver) Click(_ context.Context, selector string) error {
 }
 func (f *fakeDriver) Fill(_ context.Context, selector, value string) error {
 	f.record("fill:" + selector + "=" + value)
+	return nil
+}
+func (f *fakeDriver) Select(_ context.Context, selector, value string) error {
+	f.record("select:" + selector + "=" + value)
 	return nil
 }
 func (f *fakeDriver) Press(_ context.Context, selector, key string) error {
@@ -82,15 +92,32 @@ func TestRunAdminFlowUsesVisibleAssertionsAndActions(t *testing.T) {
 	f := &fakeDriver{texts: map[string]string{
 		"server": "server-1", "members": "member agent-a", "requests": "request pending", "groups": "group", "moderation": "post", "audit": "audit entry",
 	}}
-	c := Config{URL: "http://ui", IdentityID: "human", RoleParticipant: "agent-a", Selectors: Selectors{IdentityID: "identity", IdentityLoad: "connect", ServerID: "server-input", ServerVisible: "server", MemberVisible: "members", RequestVisible: "requests", ApproveRequest: "approve", RoleParticipant: "role-participant", RoleValue: "role-value", RoleSave: "role-save", GroupAdmin: "groups", Moderation: "moderation", AuditVisible: "audit"}}
+	c := Config{URL: "http://ui", IdentityID: "human", RoleParticipant: "agent-a", Selectors: Selectors{IdentityID: "identity", IdentityLoad: "connect", ServerID: "server-input", ServerVisible: "server", MemberVisible: "members", RequestVisible: "requests", ApproveRequest: "approve", RoleParticipant: "role-participant", RoleValue: "role-value", RoleSave: "role-save", RoleResult: "role-result", GroupAdmin: "groups", Moderation: "moderation", AuditVisible: "audit"}}
 	if _, err := RunAdminFlow(context.Background(), f, c, "server-1"); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(f.calls, "|")
-	for _, want := range []string{"fill:identity=human", "click:connect", "fill:server-input=server-1", "click:approve", "fill:role-participant=agent-a", "fill:role-value=moderator", "text:audit"} {
+	for _, want := range []string{"fill:identity=human", "click:connect", "fill:server-input=server-1", "click:approve", "select:role-participant=agent-a", "select:role-value=moderator", "text:audit"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("calls omitted %q: %s", want, joined)
 		}
+	}
+}
+
+func TestRunAdminFlowReusesConnectedBrowserSession(t *testing.T) {
+	f := &fakeDriver{texts: map[string]string{
+		"identity-status": "Connected as human", "server": "server-1",
+	}}
+	c := Config{URL: "http://ui", IdentityID: "human", Selectors: Selectors{
+		IdentityID: "identity", IdentityLoad: "connect", IdentityVisible: "identity-status",
+		ServerVisible: "server",
+	}}
+	if _, err := RunAdminFlow(context.Background(), f, c, "server-1"); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(f.calls, "|")
+	if strings.Contains(joined, "fill:identity=") || strings.Contains(joined, "click:connect") {
+		t.Fatalf("connected session should be reused: %s", joined)
 	}
 }
 

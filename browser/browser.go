@@ -17,6 +17,7 @@ type Driver interface {
 	SetViewport(context.Context, int, int) error
 	Click(context.Context, string) error
 	Fill(context.Context, string, string) error
+	Select(context.Context, string, string) error
 	Press(context.Context, string, string) error
 	Text(context.Context, string) (string, error)
 	AssertVisible(context.Context, string, string) error
@@ -33,7 +34,16 @@ func (a AgentBrowser) run(ctx context.Context, args ...string) (string, error) {
 	return string(out), nil
 }
 func (a AgentBrowser) Open(ctx context.Context, u string) error {
-	_, e := a.run(ctx, "open", u)
+	if _, e := a.run(ctx, "open", u); e != nil {
+		return e
+	}
+	// A freshly relaunched agent-browser daemon can acknowledge the navigation
+	// while its replacement Chromium page is still about:blank. Detect that
+	// documented CLI lifecycle race and issue the navigation once more.
+	current, e := a.run(ctx, "get", "url")
+	if e == nil && strings.Contains(current, "about:blank") {
+		_, e = a.run(ctx, "open", u)
+	}
 	return e
 }
 func (a AgentBrowser) Snapshot(ctx context.Context) (string, error) { return a.run(ctx, "snapshot") }
@@ -50,6 +60,10 @@ func (a AgentBrowser) Fill(ctx context.Context, s, v string) error {
 	_, e := a.run(ctx, "fill", s, v)
 	return e
 }
+func (a AgentBrowser) Select(ctx context.Context, s, v string) error {
+	_, e := a.run(ctx, "select", s, v)
+	return e
+}
 func (a AgentBrowser) Press(ctx context.Context, s, k string) error {
 	_, e := a.run(ctx, "press", s, k)
 	return e
@@ -58,6 +72,16 @@ func (a AgentBrowser) Text(ctx context.Context, s string) (string, error) {
 	return a.run(ctx, "get", "text", s)
 }
 func (a AgentBrowser) AssertVisible(ctx context.Context, s, needle string) error {
+	if needle == "" {
+		v, e := a.run(ctx, "is", "visible", s)
+		if e != nil {
+			return e
+		}
+		if strings.TrimSpace(v) != "true" {
+			return fmt.Errorf("selector %q is not visible; got %q", s, v)
+		}
+		return nil
+	}
 	v, e := a.Text(ctx, s)
 	if e != nil {
 		return e
@@ -106,6 +130,7 @@ type Selectors struct {
 	RoleParticipant string `json:"server_role_participant"`
 	RoleValue       string `json:"server_role_value"`
 	RoleSave        string `json:"server_role_save"`
+	RoleResult      string `json:"server_role_result"`
 	GroupAdmin      string `json:"group_admin_visible"`
 	Moderation      string `json:"moderation_visible"`
 	AuditVisible    string `json:"audit_visible"`
@@ -147,6 +172,9 @@ func (d observedDriver) Click(c context.Context, s string) error {
 }
 func (d observedDriver) Fill(c context.Context, s, v string) error {
 	return d.measure("Fill", func() error { return d.Driver.Fill(c, s, v) })
+}
+func (d observedDriver) Select(c context.Context, s, v string) error {
+	return d.measure("Select", func() error { return d.Driver.Select(c, s, v) })
 }
 func (d observedDriver) Press(c context.Context, s, k string) error {
 	return d.measure("Press", func() error { return d.Driver.Press(c, s, k) })
@@ -233,14 +261,17 @@ func RunHumanFlow(ctx context.Context, d Driver, c Config, groupID, postID, agen
 		}
 	}
 	if c.Selectors.IdentityID != "" && c.Selectors.IdentityLoad != "" {
-		if err := waitVisible(ctx, d, c.Selectors.IdentityID, ""); err != nil {
+		connected, err := waitIdentityReady(ctx, d, c.Selectors)
+		if err != nil {
 			return nil, err
 		}
-		if err := d.Fill(ctx, c.Selectors.IdentityID, c.IdentityID); err != nil {
-			return nil, err
-		}
-		if err := d.Click(ctx, c.Selectors.IdentityLoad); err != nil {
-			return nil, err
+		if !connected {
+			if err := d.Fill(ctx, c.Selectors.IdentityID, c.IdentityID); err != nil {
+				return nil, err
+			}
+			if err := d.Click(ctx, c.Selectors.IdentityLoad); err != nil {
+				return nil, err
+			}
 		}
 		if c.Selectors.IdentityVisible != "" {
 			if err := waitVisible(ctx, d, c.Selectors.IdentityVisible, "Connected"); err != nil {
@@ -405,6 +436,31 @@ func waitVisible(ctx context.Context, d Driver, selector, needle string) error {
 	return last
 }
 
+func waitIdentityReady(ctx context.Context, d Driver, selectors Selectors) (bool, error) {
+	deadline := time.Now().Add(5 * time.Second)
+	var last error
+	for time.Now().Before(deadline) {
+		if selectors.IdentityVisible != "" {
+			if err := d.AssertVisible(ctx, selectors.IdentityVisible, "Connected"); err == nil {
+				return true, nil
+			} else {
+				last = err
+			}
+		}
+		if err := d.AssertVisible(ctx, selectors.IdentityID, ""); err == nil {
+			return false, nil
+		} else {
+			last = err
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	return false, last
+}
+
 // RunAdminFlow checks the human administration surface using only visible
 // controls. Empty optional action selectors are skipped so the same driver can
 // target an implementation that exposes a read-only subset of administration.
@@ -415,14 +471,17 @@ func RunAdminFlow(ctx context.Context, d Driver, c Config, serverID string) ([]s
 	}
 	defer d.Close(context.Background())
 	if c.Selectors.IdentityID != "" && c.Selectors.IdentityLoad != "" {
-		if err := waitVisible(ctx, d, c.Selectors.IdentityID, ""); err != nil {
+		connected, err := waitIdentityReady(ctx, d, c.Selectors)
+		if err != nil {
 			return nil, err
 		}
-		if err := d.Fill(ctx, c.Selectors.IdentityID, c.IdentityID); err != nil {
-			return nil, err
-		}
-		if err := d.Click(ctx, c.Selectors.IdentityLoad); err != nil {
-			return nil, err
+		if !connected {
+			if err := d.Fill(ctx, c.Selectors.IdentityID, c.IdentityID); err != nil {
+				return nil, err
+			}
+			if err := d.Click(ctx, c.Selectors.IdentityLoad); err != nil {
+				return nil, err
+			}
 		}
 		if c.Selectors.IdentityVisible != "" {
 			if err := waitVisible(ctx, d, c.Selectors.IdentityVisible, "Connected"); err != nil {
@@ -466,16 +525,26 @@ func RunAdminFlow(ctx context.Context, d Driver, c Config, serverID string) ([]s
 		if err := d.Click(ctx, c.Selectors.ApproveRequest); err != nil {
 			return nil, err
 		}
+		if c.Selectors.RequestVisible != "" {
+			if err := waitVisible(ctx, d, c.Selectors.RequestVisible, "No pending request"); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if c.Selectors.RoleParticipant != "" && c.Selectors.RoleValue != "" && c.Selectors.RoleSave != "" {
-		if err := d.Fill(ctx, c.Selectors.RoleParticipant, c.RoleParticipant); err != nil {
+		if err := d.Select(ctx, c.Selectors.RoleParticipant, c.RoleParticipant); err != nil {
 			return nil, err
 		}
-		if err := d.Fill(ctx, c.Selectors.RoleValue, "moderator"); err != nil {
+		if err := d.Select(ctx, c.Selectors.RoleValue, "moderator"); err != nil {
 			return nil, err
 		}
 		if err := d.Click(ctx, c.Selectors.RoleSave); err != nil {
 			return nil, err
+		}
+		if c.Selectors.RoleResult != "" {
+			if err := waitVisible(ctx, d, c.Selectors.RoleResult, "Role updated"); err != nil {
+				return nil, err
+			}
 		}
 	}
 	s, err := d.Snapshot(ctx)

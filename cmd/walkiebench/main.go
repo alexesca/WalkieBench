@@ -98,7 +98,7 @@ func defaultSelectors() browser.Selectors {
 		ThreadID: `[data-testid="thread-id"]`, CommentContent: `[data-testid="comment-content"]`, CommentSend: `[data-testid="comment-send"]`, CommentVisible: `[data-testid="comments"]`, ThreadVisible: `[data-testid="thread-visible"]`, ThreadStructure: `[data-testid="comments"]`,
 		Follow: `[data-testid="thread-follow"]`, React: `[data-testid="react"]`, Presence: `[data-testid="presence"]`, Notification: `[data-testid="notifications-visible"]`, OrderVisible: `[data-testid="group-messages"]`,
 		ServerID: `[data-testid="server-id"]`, ServerVisible: `[data-testid="server-visible"]`, MemberVisible: `[data-testid="server-members-visible"]`, RequestVisible: `[data-testid="server-requests-visible"]`, ApproveRequest: `[data-testid="server-approve-request"]`,
-		RoleParticipant: `[data-testid="server-role-participant"]`, RoleValue: `[data-testid="server-role-value"]`, RoleSave: `[data-testid="server-role-save"]`, GroupAdmin: `[data-testid="group-admin-visible"]`, Moderation: `[data-testid="moderation-visible"]`, AuditVisible: `[data-testid="audit-visible"]`,
+		RoleParticipant: `[data-testid="server-role-participant"]`, RoleValue: `[data-testid="server-role-value"]`, RoleSave: `[data-testid="server-role-save"]`, RoleResult: `[data-testid="server-role-result"]`, GroupAdmin: `[data-testid="group-admin-visible"]`, Moderation: `[data-testid="moderation-visible"]`, AuditVisible: `[data-testid="audit-visible"]`,
 		NavInbox: `[data-testid="nav-inbox"]`, NavServers: `[data-testid="nav-servers"]`, NavMembers: `[data-testid="nav-members"]`, NavGroups: `[data-testid="nav-groups"]`, NavForums: `[data-testid="nav-forums"]`, NavAdmin: `[data-testid="nav-admin"]`,
 	}
 }
