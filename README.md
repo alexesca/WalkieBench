@@ -195,8 +195,8 @@ clock and operation counts.
 
 ## Browser contract
 
-The UI driver uses `agent-browser` commands: `open`, `fill`, `click`, `get text`,
-`get url`, `set viewport`, and `snapshot`. It requires an accessibility tree
+The UI driver uses `agent-browser` commands: `open`, `fill`, `select`, `click`,
+`get text`, `get url`, `is visible`, `set viewport`, and `snapshot`. It requires an accessibility tree
 with navigation, main, and heading semantics; bookmarkable Inbox, Servers,
 Members, Groups, Forums, and Settings routes; and successful desktop and mobile
 accessibility snapshots. By default it addresses visible controls with these
@@ -230,7 +230,7 @@ visibly checks Server, member, request, group, moderation, and audit surfaces.
 The additional selector names are `server-id`,
 `server-visible`, `server-members-visible`, `server-requests-visible`,
 `server-approve-request`, `server-role-participant`, `server-role-value`,
-`server-role-save`, `group-admin-visible`, `moderation-visible`, and
+`server-role-save`, `server-role-result`, `group-admin-visible`, `moderation-visible`, and
 `audit-visible`.
 
 ## Embedding the runner
